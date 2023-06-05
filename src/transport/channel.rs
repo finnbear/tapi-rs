@@ -3,18 +3,32 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-#[derive(Default)]
 pub(crate) struct Registry<M> {
     inner: Arc<Mutex<Inner<M>>>,
 }
 
-#[derive(Default)]
+impl<M> Default for Registry<M> {
+    fn default() -> Self {
+        Self {
+            inner: Default::default(),
+        }
+    }
+}
+
 struct Inner<M> {
     senders: Vec<mpsc::Sender<(usize, M)>>,
 }
 
+impl<M> Default for Inner<M> {
+    fn default() -> Self {
+        Self {
+            senders: Vec::new(),
+        }
+    }
+}
+
 impl<M> Registry<M> {
-    fn channel(&self) -> Channel<M> {
+    pub(crate) fn channel(&self) -> Channel<M> {
         let (sender, receiver) = mpsc::channel(10);
 
         let mut inner = self.inner.lock().unwrap();

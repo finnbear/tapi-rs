@@ -2,7 +2,7 @@ mod channel;
 mod error;
 mod message;
 
-pub(crate) use channel::Channel;
+pub(crate) use channel::{Channel, Registry as ChannelRegistry};
 pub(crate) use error::Error;
 pub(crate) use message::Message;
 use std::future::Future;

@@ -1,17 +1,17 @@
-use crate::{Transport, TransportMessage};
+use crate::Transport;
 use rand::{thread_rng, Rng};
 use std::{future::Future, marker::PhantomData};
 
-use super::error::Error;
+use super::{error::Error, Message};
 
-pub(crate) struct Client<T: Transport, O: TransportMessage, R: TransportMessage> {
+pub(crate) struct Client<T: Transport<Message = Message<O, R>>, O, R> {
     transport: T,
     client_id: u64,
     operation_counter: u64,
     _spooky: PhantomData<(O, R)>,
 }
 
-impl<T: Transport, O: TransportMessage, R: TransportMessage> Client<T, O, R> {
+impl<T: Transport<Message = Message<O, R>>, O, R> Client<T, O, R> {
     pub(crate) fn new(transport: T) -> Self {
         Self {
             transport,

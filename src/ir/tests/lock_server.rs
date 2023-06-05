@@ -1,7 +1,7 @@
-use crate::{ChannelTransport, IrClient};
+use crate::{ChannelRegistry, ChannelTransport, IrClient};
 
-#[test]
-fn lock_server() {
+#[tokio::test]
+async fn lock_server() {
     #[derive(Debug, Clone)]
     enum Op {
         Lock,
@@ -14,5 +14,10 @@ fn lock_server() {
         No,
     }
 
-    let client = IrClient::<ChannelTransport, Op, Res>::new();
+    let registry = ChannelRegistry::default();
+
+    let client_channel = registry.channel();
+    let mut client = IrClient::<ChannelTransport<_>, Op, Res>::new(client_channel);
+
+    client.invoke_consensus(Op::Lock, |results| Res::Ok).await;
 }
