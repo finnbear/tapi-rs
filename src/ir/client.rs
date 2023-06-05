@@ -1,5 +1,5 @@
-use crate::transport::Transport;
-use std::marker::PhantomData;
+use crate::{Transport, TransportMessage};
+use std::{future::Future, marker::PhantomData};
 
 use super::error::Error;
 
@@ -10,13 +10,16 @@ pub(crate) struct Client<T: Transport, O: TransportMessage, R: TransportMessage>
     _spooky: PhantomData<(O, R)>,
 }
 
-impl<T: Transport, O: TransportMessage, R: TransportMessage> Client<O, R> {
-    pub(crate) fn invoke_inconsistent(&mut self, op: O) -> impl Future<Item = Result<(), Error>> {}
+impl<T: Transport, O: TransportMessage, R: TransportMessage> Client<T, O, R> {
+    pub(crate) fn invoke_inconsistent(&mut self, op: O) -> impl Future<Output = Result<(), Error>> {
+        std::future::ready(todo!())
+    }
 
     pub(crate) fn invoke_consensus(
         &mut self,
         op: O,
-        decide: Fn(Vec<R>) -> R,
-    ) -> impl Future<Item = Result<R, Error>> {
+        decide: impl Fn(Vec<R>) -> R,
+    ) -> impl Future<Output = Result<R, Error>> {
+        std::future::ready(todo!())
     }
 }

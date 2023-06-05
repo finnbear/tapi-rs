@@ -1,16 +1,28 @@
-use std::collections::{HashMap, HashSet};
-
-use crate::transport::Transport;
-
 use super::{OpId, Record};
+use crate::{Transport, TransportMessage};
+use std::collections::{HashMap, HashSet};
 
 pub(crate) enum State {
     Normal,
     ViewChanging,
 }
 
+pub(crate) trait Upcalls {
+    type Op: TransportMessage;
+    type Result: TransportMessage;
+
+    fn exec_inconsistent(&mut self, op: Self::Op);
+    fn exec_consensus(&mut self, op: Self::Op);
+    fn sync(&mut self, record: Record<Self::Op, Self::Result>);
+    fn merge(
+        &mut self,
+        d: HashMap<OpId, Self::Op>,
+        u: HashMap<OpId, Self::Op>,
+    ) -> Record<Self::Op, Self::Result>;
+}
+
 pub(crate) struct Replica<T: Transport, O, R> {
     transport: T,
     state: State,
-    record: HashMap<OpId, Record<O, R>>,
+    record: Record<O, R>,
 }
