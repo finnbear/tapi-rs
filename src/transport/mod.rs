@@ -1,13 +1,23 @@
+mod channel;
 mod error;
 mod message;
-use std::future::Future;
 
+pub(crate) use channel::Channel;
 pub(crate) use error::Error;
 pub(crate) use message::Message;
+use std::future::Future;
 
 pub(crate) trait Transport {
-    type Address;
+    type Address: 'static;
+    type Message: Message;
 
-    fn send<M: Message>(&self, message: M);
-    fn receive<M>(&self) -> impl Future<Output = Result<M, Error>>;
+    fn address(&self) -> Self::Address;
+    fn send(
+        &self,
+        address: Self::Address,
+        message: Self::Message,
+    ) -> impl Future<Output = Result<(), Error>> + 'static;
+    fn receive(
+        &mut self,
+    ) -> impl Future<Output = Result<(Self::Address, Self::Message), Error>> + '_;
 }

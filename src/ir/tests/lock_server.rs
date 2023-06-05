@@ -1,19 +1,18 @@
-use super::super::Client;
+use crate::{ChannelTransport, IrClient};
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn lock_server() {
-        enum Op {
-            Lock,
-            Unlock,
-        }
-
-        enum Res {
-            Ok,
-            No,
-        }
-
-        let client = Client::<Op, Res>::new();
+#[test]
+fn lock_server() {
+    #[derive(Debug, Clone)]
+    enum Op {
+        Lock,
+        Unlock,
     }
+
+    #[derive(Debug, Clone)]
+    enum Res {
+        Ok,
+        No,
+    }
+
+    let client = IrClient::<ChannelTransport, Op, Res>::new();
 }

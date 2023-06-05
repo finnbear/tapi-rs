@@ -4,6 +4,8 @@ mod message;
 mod op;
 mod record;
 mod replica;
+
+#[cfg(test)]
 mod tests;
 
 pub(crate) use client::Client;

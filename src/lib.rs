@@ -6,4 +6,6 @@ mod ir;
 mod transport;
 
 pub(crate) use ir::{Client as IrClient, Replica as IrReplica};
-pub(crate) use transport::{Error as TransportError, Message as TransportMessage, Transport};
+pub(crate) use transport::{
+    Channel as ChannelTransport, Error as TransportError, Message as TransportMessage, Transport,
+};
