@@ -1,4 +1,5 @@
 use crate::{Transport, TransportMessage};
+use rand::{thread_rng, Rng};
 use std::{future::Future, marker::PhantomData};
 
 use super::error::Error;
@@ -11,6 +12,15 @@ pub(crate) struct Client<T: Transport, O: TransportMessage, R: TransportMessage>
 }
 
 impl<T: Transport, O: TransportMessage, R: TransportMessage> Client<T, O, R> {
+    pub(crate) fn new(transport: T) -> Self {
+        Self {
+            transport,
+            client_id: thread_rng().gen(),
+            operation_counter: 0,
+            _spooky: PhantomData,
+        }
+    }
+
     pub(crate) fn invoke_inconsistent(&mut self, op: O) -> impl Future<Output = Result<(), Error>> {
         std::future::ready(todo!())
     }
