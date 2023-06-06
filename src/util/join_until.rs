@@ -10,11 +10,27 @@ use std::task::{ready, Context, Poll};
 pin_project! {
     /// Future for the [`join_n`] function.
     #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub(crate) struct JoinN<K, F: Future> {
+    pub(crate) struct JoinUntil<K, F: Future, U: Until<K, F::Output>> {
         #[pin]
         active: FuturesOrdered<KeyedFuture<K, F>>,
         output: HashMap<K, F::Output>,
-        n: usize,
+        until: U
+    }
+}
+
+trait Until<K, O> {
+    fn until(&self, results: &HashMap<K, O>) -> bool;
+}
+
+impl<K, O> Until<K, O> for usize {
+    fn until(&self, results: &HashMap<K, O>) -> bool {
+        results.len() >= *self
+    }
+}
+
+impl<K, O, F: Fn(&HashMap<K, O>) -> bool> Until<K, O> for F {
+    fn until(&self, results: &HashMap<K, O>) -> bool {
+        self(results)
     }
 }
 
@@ -36,7 +52,10 @@ impl<K, F: Future> Future for KeyedFuture<K, F> {
     }
 }
 
-pub(crate) fn join_n<K, F, I: IntoIterator<Item = (K, F)>>(iter: I, n: usize) -> JoinN<K, F>
+pub(crate) fn join_until<K, F, I: IntoIterator<Item = (K, F)>, U: Until<K, F::Output>>(
+    iter: I,
+    until: U,
+) -> JoinUntil<K, F, U>
 where
     F: Future,
 {
@@ -48,16 +67,14 @@ where
         });
     }
 
-    assert!(active.len() >= n);
-
-    JoinN {
+    JoinUntil {
         active,
-        output: HashMap::with_capacity(n),
-        n,
+        output: HashMap::with_capacity(active.len()),
+        until,
     }
 }
 
-impl<K: Eq + Hash, F> Future for JoinN<K, F>
+impl<K: Eq + Hash, F, U: Until<K, F::Output>> Future for JoinUntil<K, F, U>
 where
     F: Future,
 {
@@ -66,12 +83,13 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
         Poll::Ready(loop {
-            if let Some((k, x)) = ready!(this.active.as_mut().poll_next(cx)) {
-                this.output.insert(k, x);
-                if this.output.len() < *this.n {
+            if !this.until.until(&this.output) {
+                if let Some((k, x)) = ready!(this.active.as_mut().poll_next(cx)) {
+                    this.output.insert(k, x);
                     continue;
                 }
             }
+
             break mem::take(this.output);
         })
     }

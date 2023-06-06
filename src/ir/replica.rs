@@ -1,6 +1,6 @@
 use super::{
-    record::Consistency, FinalizeInconsistent, Message, OpId, ProposeInconsistent, Record,
-    RecordEntry, RecordState, ReplyInconsistent,
+    record::Consistency, FinalizeInconsistent, Membership, Message, OpId, ProposeInconsistent,
+    Record, RecordEntry, RecordState, ReplyInconsistent,
 };
 use crate::{Transport, TransportMessage};
 use std::{
@@ -32,7 +32,7 @@ pub(crate) trait Upcalls {
 
 pub(crate) struct Replica<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
     index: Index,
-    membership: HashMap<Index, T::Address>,
+    membership: Membership<T>,
     upcalls: Mutex<U>,
     transport: T,
     state: State,
@@ -40,12 +40,7 @@ pub(crate) struct Replica<U: Upcalls, T: Transport<Message = Message<U::Op, U::R
 }
 
 impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T> {
-    pub(crate) fn new(
-        index: Index,
-        membership: HashMap<Index, T::Address>,
-        upcalls: U,
-        transport: T,
-    ) -> Self {
+    pub(crate) fn new(index: Index, membership: Membership<T>, upcalls: U, transport: T) -> Self {
         Self {
             index,
             upcalls: Mutex::new(upcalls),

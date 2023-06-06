@@ -1,3 +1,3 @@
-mod join_n;
+mod join_until;
 
-pub(crate) use join_n::join_n;
+pub(crate) use join_until::join_until;

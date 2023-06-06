@@ -1,6 +1,6 @@
 use crate::{
-    ChannelRegistry, ChannelTransport, IrClient, IrMessage, IrOpId, IrRecord, IrReplica,
-    IrReplicaIndex, IrReplicaUpcalls, Transport,
+    ChannelRegistry, ChannelTransport, IrClient, IrMembership, IrMessage, IrOpId, IrRecord,
+    IrReplica, IrReplicaIndex, IrReplicaUpcalls, Transport,
 };
 use std::{
     collections::HashMap,
@@ -61,14 +61,12 @@ async fn lock_server() {
 
     const REPLICAS: usize = 3;
 
-    let membership = (0..REPLICAS)
-        .map(|i| (IrReplicaIndex(i), i))
-        .collect::<HashMap<_, _>>();
+    let membership = IrMembership::new((0..REPLICAS).collect::<Vec<_>>());
 
     fn create_replica(
         index: IrReplicaIndex,
         registry: &ChannelRegistry<Message>,
-        membership: &HashMap<IrReplicaIndex, <ChannelTransport<Message> as Transport>::Address>,
+        membership: &IrMembership<ChannelTransport<Message>>,
     ) -> Arc<Mutex<IrReplica<Upcalls, ChannelTransport<Message>>>> {
         Arc::new_cyclic(
             |weak: &std::sync::Weak<Mutex<IrReplica<Upcalls, ChannelTransport<Message>>>>| {
@@ -88,7 +86,7 @@ async fn lock_server() {
 
     fn create_client(
         registry: &ChannelRegistry<Message>,
-        membership: &HashMap<IrReplicaIndex, <ChannelTransport<Message> as Transport>::Address>,
+        membership: &IrMembership<ChannelTransport<Message>>,
     ) -> Arc<Mutex<IrClient<ChannelTransport<Message>, Op, Res>>> {
         Arc::new_cyclic(
             |weak: &std::sync::Weak<Mutex<IrClient<ChannelTransport<Message>, Op, Res>>>| {
@@ -103,5 +101,10 @@ async fn lock_server() {
 
     let client = create_client(&registry, &membership);
 
+    client
+        .lock()
+        .unwrap()
+        .invoke_consensus(Op::Lock, |results| Res::No)
+        .await;
     client.lock().unwrap().invoke_inconsistent(Op::Unlock).await;
 }

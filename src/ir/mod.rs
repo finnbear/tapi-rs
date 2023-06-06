@@ -1,5 +1,6 @@
 mod client;
 mod error;
+mod membership;
 mod message;
 mod op;
 mod record;
@@ -10,6 +11,7 @@ mod tests;
 
 pub(crate) use client::{Client, Id as ClientId};
 pub(crate) use error::Error;
+pub(crate) use membership::Membership;
 pub(crate) use message::{
     Confirm, FinalizeConsensus, FinalizeInconsistent, Message, ProposeConsensus,
     ProposeInconsistent, ReplyConsensus, ReplyInconsistent,
