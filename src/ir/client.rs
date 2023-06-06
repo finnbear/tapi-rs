@@ -1,4 +1,4 @@
-use super::{error::Error, Message, OpId, Propose, ReplicaIndex};
+use super::{error::Error, FinalizeInconsistent, Message, OpId, ProposeInconsistent, ReplicaIndex};
 use crate::{util::join_n, Transport};
 use rand::{thread_rng, Rng};
 use std::{
@@ -11,6 +11,12 @@ use std::{
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) struct Id(u64);
 
+impl Id {
+    fn new() -> Self {
+        Self(thread_rng().gen())
+    }
+}
+
 pub(crate) struct Client<T: Transport<Message = Message<O, R>>, O, R> {
     transport: T,
     id: Id,
@@ -20,10 +26,10 @@ pub(crate) struct Client<T: Transport<Message = Message<O, R>>, O, R> {
 }
 
 impl<T: Transport<Message = Message<O, R>>, O: Clone, R> Client<T, O, R> {
-    pub(crate) fn new(transport: T, membership: HashMap<ReplicaIndex, T::Address>) -> Self {
+    pub(crate) fn new(membership: HashMap<ReplicaIndex, T::Address>, transport: T) -> Self {
         Self {
             transport,
-            id: Id(thread_rng().gen()),
+            id: Id::new(),
             membership,
             operation_counter: AtomicU64::new(0),
             _spooky: PhantomData,
@@ -32,26 +38,43 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R> Client<T, O, R> {
 
     pub(crate) fn invoke_inconsistent(&self, op: O) -> impl Future<Output = Result<(), Error>> {
         let number = self.operation_counter.fetch_add(1, Ordering::Relaxed);
+        let op_id = OpId {
+            client_id: self.id,
+            number,
+        };
         let mut replies = HashMap::<ReplicaIndex, R>::new();
         let results = join_n(
             self.membership.iter().map(|(index, address)| {
                 (
-                    index,
+                    *index,
                     self.transport.send(
                         *address,
-                        Message::Propose(Propose {
-                            op_id: OpId {
-                                client_id: self.id,
-                                number,
-                            },
+                        Message::ProposeInconsistent(ProposeInconsistent {
+                            op_id,
                             op: op.clone(),
                         }),
                     ),
                 )
             }),
-            1,
+            self.membership.len() / 2 + 1,
         );
-        std::future::ready(Ok(()))
+
+        let membership = self.membership.values().copied().collect::<Vec<_>>();
+        let transport = self.transport.clone();
+
+        async move {
+            let results = results.await;
+            for (_, result) in results {
+                assert!(matches!(result, Message::ReplyInconsistent(_)));
+            }
+            for address in membership {
+                transport.do_send(
+                    address,
+                    Message::FinalizeInconsistent(FinalizeInconsistent { op_id }),
+                );
+            }
+            Ok(())
+        }
     }
 
     pub(crate) fn invoke_consensus(

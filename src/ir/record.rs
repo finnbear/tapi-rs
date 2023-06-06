@@ -12,12 +12,20 @@ pub(crate) enum Consistency {
 }
 
 pub(crate) struct Entry<O, R> {
-    operation: O,
-    consistency: Consistency,
-    result: Option<R>,
-    state: State,
+    pub(crate) op: O,
+    pub(crate) consistency: Consistency,
+    pub(crate) result: Option<R>,
+    pub(crate) state: State,
 }
 
 pub(crate) struct Record<O, R> {
     pub(crate) entries: HashMap<OpId, Entry<O, R>>,
+}
+
+impl<O, R> Default for Record<O, R> {
+    fn default() -> Self {
+        Self {
+            entries: Default::default(),
+        }
+    }
 }

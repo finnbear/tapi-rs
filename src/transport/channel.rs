@@ -46,6 +46,15 @@ pub(crate) struct Channel<M> {
     inner: Arc<RwLock<Inner<M>>>,
 }
 
+impl<M> Clone for Channel<M> {
+    fn clone(&self) -> Self {
+        Self {
+            address: self.address,
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
 impl<M: Message> super::Transport for Channel<M> {
     type Address = usize;
     type Message = M;
@@ -70,6 +79,8 @@ impl<M: Message> super::Transport for Channel<M> {
                     if let Some(reply) = reply {
                         break reply;
                     }
+                } else {
+                    println!("unknown address {address:?}");
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(100));
             }
