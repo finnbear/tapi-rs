@@ -16,4 +16,6 @@ pub(crate) use message::{
 };
 pub(crate) use op::Id as OpId;
 pub(crate) use record::{Entry as RecordEntry, Record, State as RecordState};
-pub(crate) use replica::{Index as ReplicaIndex, Replica, State as ReplicaState};
+pub(crate) use replica::{
+    Index as ReplicaIndex, Replica, State as ReplicaState, Upcalls as ReplicaUpcalls,
+};

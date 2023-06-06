@@ -1,5 +1,6 @@
 use crate::{
-    ChannelRegistry, ChannelTransport, IrClient, IrMessage, IrReplica, IrReplicaIndex, Transport,
+    ChannelRegistry, ChannelTransport, IrClient, IrMessage, IrOpId, IrRecord, IrReplica,
+    IrReplicaIndex, IrReplicaUpcalls, Transport,
 };
 use std::{
     collections::HashMap,
@@ -22,6 +23,40 @@ async fn lock_server() {
 
     type Message = IrMessage<Op, Res>;
 
+    struct Upcalls {
+        locked: bool,
+    }
+
+    impl IrReplicaUpcalls for Upcalls {
+        type Op = Op;
+        type Result = Res;
+
+        fn exec_inconsistent(&mut self, op: &Self::Op) {
+            match op {
+                Op::Unlock => {
+                    self.locked = false;
+                }
+                _ => panic!(),
+            }
+        }
+        fn exec_consensus(&mut self, op: &Self::Op) {
+            match op {
+                Op::Lock => {
+                    self.locked = true;
+                }
+                _ => panic!(),
+            }
+        }
+        fn sync(&mut self, record: IrRecord<Self::Op, Self::Result>) {}
+        fn merge(
+            &mut self,
+            d: HashMap<IrOpId, Self::Op>,
+            u: HashMap<IrOpId, Self::Op>,
+        ) -> IrRecord<Self::Op, Self::Result> {
+            Default::default()
+        }
+    }
+
     let registry = ChannelRegistry::default();
 
     const REPLICAS: usize = 3;
@@ -34,14 +69,15 @@ async fn lock_server() {
         index: IrReplicaIndex,
         registry: &ChannelRegistry<Message>,
         membership: &HashMap<IrReplicaIndex, <ChannelTransport<Message> as Transport>::Address>,
-    ) -> Arc<Mutex<IrReplica<ChannelTransport<Message>, Op, Res>>> {
+    ) -> Arc<Mutex<IrReplica<Upcalls, ChannelTransport<Message>>>> {
         Arc::new_cyclic(
-            |weak: &std::sync::Weak<Mutex<IrReplica<ChannelTransport<Message>, Op, Res>>>| {
+            |weak: &std::sync::Weak<Mutex<IrReplica<Upcalls, ChannelTransport<Message>>>>| {
                 let weak = weak.clone();
                 let channel = registry.channel(move |from, message| {
                     weak.upgrade()?.lock().unwrap().receive(from, message)
                 });
-                Mutex::new(IrReplica::new(index, membership.clone(), channel))
+                let upcalls = Upcalls { locked: false };
+                Mutex::new(IrReplica::new(index, membership.clone(), upcalls, channel))
             },
         )
     }
@@ -67,5 +103,5 @@ async fn lock_server() {
 
     let client = create_client(&registry, &membership);
 
-    client.lock().unwrap().invoke_inconsistent(Op::Lock).await;
+    client.lock().unwrap().invoke_inconsistent(Op::Unlock).await;
 }

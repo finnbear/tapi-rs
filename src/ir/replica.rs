@@ -1,6 +1,6 @@
 use super::{
-    record::Consistency, Message, OpId, ProposeInconsistent, Record, RecordEntry, RecordState,
-    ReplyInconsistent,
+    record::Consistency, FinalizeInconsistent, Message, OpId, ProposeInconsistent, Record,
+    RecordEntry, RecordState, ReplyInconsistent,
 };
 use crate::{Transport, TransportMessage};
 use std::{
@@ -20,8 +20,8 @@ pub(crate) trait Upcalls {
     type Op: TransportMessage;
     type Result: TransportMessage;
 
-    fn exec_inconsistent(&mut self, op: Self::Op);
-    fn exec_consensus(&mut self, op: Self::Op);
+    fn exec_inconsistent(&mut self, op: &Self::Op);
+    fn exec_consensus(&mut self, op: &Self::Op);
     fn sync(&mut self, record: Record<Self::Op, Self::Result>);
     fn merge(
         &mut self,
@@ -30,18 +30,25 @@ pub(crate) trait Upcalls {
     ) -> Record<Self::Op, Self::Result>;
 }
 
-pub(crate) struct Replica<T: Transport<Message = Message<O, R>>, O, R> {
+pub(crate) struct Replica<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
     index: Index,
     membership: HashMap<Index, T::Address>,
+    upcalls: Mutex<U>,
     transport: T,
     state: State,
-    record: Mutex<Record<O, R>>,
+    record: Mutex<Record<U::Op, U::Result>>,
 }
 
-impl<T: Transport<Message = Message<O, R>>, O, R> Replica<T, O, R> {
-    pub(crate) fn new(index: Index, membership: HashMap<Index, T::Address>, transport: T) -> Self {
+impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T> {
+    pub(crate) fn new(
+        index: Index,
+        membership: HashMap<Index, T::Address>,
+        upcalls: U,
+        transport: T,
+    ) -> Self {
         Self {
             index,
+            upcalls: Mutex::new(upcalls),
             transport,
             membership,
             state: State::Normal,
@@ -52,8 +59,8 @@ impl<T: Transport<Message = Message<O, R>>, O, R> Replica<T, O, R> {
     pub(crate) fn receive(
         &self,
         address: T::Address,
-        message: Message<O, R>,
-    ) -> Option<Message<O, R>> {
+        message: Message<U::Op, U::Result>,
+    ) -> Option<Message<U::Op, U::Result>> {
         match message {
             Message::ProposeInconsistent(ProposeInconsistent { op_id, op }) => {
                 let mut record = self.record.lock().unwrap();
@@ -68,8 +75,15 @@ impl<T: Transport<Message = Message<O, R>>, O, R> Replica<T, O, R> {
                 return Some(Message::ReplyInconsistent(ReplyInconsistent { op_id }));
             }
             Message::ProposeConsensus(_) => todo!(),
-            Message::FinalizeInconsistent(_) => {
-                // mark op as final.
+            Message::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
+                let mut record = self.record.lock().unwrap();
+
+                if let Some(entry) = record.entries.get_mut(&op_id) {
+                    entry.state = RecordState::Finalized;
+                    let mut upcalls = self.upcalls.lock().unwrap();
+                    upcalls.exec_inconsistent(&entry.op);
+                    drop(record);
+                }
             }
             Message::FinalizeConsensus(_) => todo!(),
             Message::ReplyInconsistent(_) | Message::ReplyConsensus(_) | Message::Confirm(_) => {

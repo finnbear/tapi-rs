@@ -7,7 +7,8 @@ mod transport;
 pub(crate) mod util;
 
 pub(crate) use ir::{
-    Client as IrClient, Message as IrMessage, Replica as IrReplica, ReplicaIndex as IrReplicaIndex,
+    Client as IrClient, Message as IrMessage, OpId as IrOpId, Record as IrRecord,
+    Replica as IrReplica, ReplicaIndex as IrReplicaIndex, ReplicaUpcalls as IrReplicaUpcalls,
 };
 pub(crate) use transport::{
     Channel as ChannelTransport, ChannelRegistry, Error as TransportError,
