@@ -55,6 +55,13 @@ impl<M> Clone for Channel<M> {
     }
 }
 
+impl<M> Channel<M> {
+    fn should_drop(_from: usize, _to: usize) -> bool {
+        use rand::Rng;
+        rand::thread_rng().gen_bool(0.1)
+    }
+}
+
 impl<M: Message> super::Transport for Channel<M> {
     type Address = usize;
     type Message = M;
@@ -76,10 +83,17 @@ impl<M: Message> super::Transport for Channel<M> {
         async move {
             loop {
                 if let Some(callback) = callback.as_ref() {
+                    if Self::should_drop(from, address) {
+                        continue;
+                    }
                     let reply = callback(from, message.clone());
                     if let Some(reply) = reply {
                         if let Ok(result) = reply.try_into() {
-                            break result;
+                            if !Self::should_drop(address, from) {
+                                break result;
+                            }
+                        } else {
+                            println!("unexpected type");
                         }
                     }
                 } else {
@@ -95,7 +109,9 @@ impl<M: Message> super::Transport for Channel<M> {
         let callback = inner.callbacks.get(address).map(Arc::clone);
         drop(inner);
         if let Some(callback) = callback {
-            callback(self.address, message.into());
+            if !Self::should_drop(self.address, address) {
+                callback(self.address, message.into());
+            }
         }
     }
 }

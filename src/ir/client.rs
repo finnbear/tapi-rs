@@ -10,6 +10,7 @@ use crate::{
 use rand::{thread_rng, Rng};
 use std::{
     collections::HashMap,
+    fmt::Debug,
     future::Future,
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
@@ -32,7 +33,9 @@ pub(crate) struct Client<T: Transport<Message = Message<O, R>>, O, R> {
     _spooky: PhantomData<(O, R)>,
 }
 
-impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq> Client<T, O, R> {
+impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Debug>
+    Client<T, O, R>
+{
     pub(crate) fn new(membership: Membership<T>, transport: T) -> Self {
         Self {
             transport,

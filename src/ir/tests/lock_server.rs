@@ -64,7 +64,7 @@ async fn lock_server() {
 
     let registry = ChannelRegistry::default();
 
-    const REPLICAS: usize = 3;
+    const REPLICAS: usize = 9;
 
     let membership = IrMembership::new((0..REPLICAS).collect::<Vec<_>>());
 
@@ -106,11 +106,21 @@ async fn lock_server() {
 
     let client = create_client(&registry, &membership);
 
+    let decide_lock = |results: Vec<Res>| {
+        let ok = results.iter().filter(|&r| r == &Res::Ok).count();
+        //println!("deciding {ok} of {} : {results:?}", results.len());
+        if ok >= (REPLICAS - 1) / 2 + 1 {
+            Res::Ok
+        } else {
+            Res::No
+        }
+    };
+
     assert_eq!(
         client
             .lock()
             .unwrap()
-            .invoke_consensus(Op::Lock, |results| Res::No)
+            .invoke_consensus(Op::Lock, &decide_lock)
             .await,
         Ok(Res::Ok)
     );
@@ -118,7 +128,7 @@ async fn lock_server() {
         client
             .lock()
             .unwrap()
-            .invoke_consensus(Op::Lock, |results| Res::No)
+            .invoke_consensus(Op::Lock, &decide_lock)
             .await,
         Ok(Res::No)
     );
@@ -127,7 +137,7 @@ async fn lock_server() {
         client
             .lock()
             .unwrap()
-            .invoke_consensus(Op::Lock, |results| Res::No)
+            .invoke_consensus(Op::Lock, &decide_lock)
             .await,
         Ok(Res::Ok)
     );

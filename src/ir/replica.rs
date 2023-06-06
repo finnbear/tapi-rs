@@ -72,15 +72,21 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
             }
             Message::ProposeConsensus(ProposeConsensus { op_id, op }) => {
                 let mut record = self.record.lock().unwrap();
-                let mut upcalls = self.upcalls.lock().unwrap();
-                let result = upcalls.exec_consensus(&op);
 
-                record.entries.entry(op_id).or_insert(RecordEntry {
-                    op,
-                    consistency: Consistency::Consistent,
-                    result: Some(result.clone()),
-                    state: RecordState::Tentative,
-                });
+                let result = match record.entries.entry(op_id) {
+                    Entry::Occupied(entry) => entry.get().result.clone().unwrap(),
+                    Entry::Vacant(vacant) => {
+                        let mut upcalls = self.upcalls.lock().unwrap();
+                        let result = upcalls.exec_consensus(&op);
+                        vacant.insert(RecordEntry {
+                            op,
+                            consistency: Consistency::Consistent,
+                            result: Some(result.clone()),
+                            state: RecordState::Tentative,
+                        });
+                        result
+                    }
+                };
 
                 return Some(Message::ReplyConsensus(ReplyConsensus { op_id, result }));
             }
