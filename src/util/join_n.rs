@@ -48,6 +48,8 @@ where
         });
     }
 
+    assert!(active.len() >= n);
+
     JoinN {
         active,
         output: HashMap::with_capacity(n),
@@ -64,12 +66,13 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
         Poll::Ready(loop {
-            match ready!(this.active.as_mut().poll_next(cx)) {
-                Some((k, x)) => {
-                    this.output.insert(k, x);
+            if let Some((k, x)) = ready!(this.active.as_mut().poll_next(cx)) {
+                this.output.insert(k, x);
+                if this.output.len() < *this.n {
+                    continue;
                 }
-                None => break mem::take(this.output),
             }
+            break mem::take(this.output);
         })
     }
 }
