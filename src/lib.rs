@@ -4,6 +4,7 @@
 
 mod ir;
 mod transport;
+pub(crate) mod util;
 
 pub(crate) use ir::{
     Client as IrClient, Message as IrMessage, Replica as IrReplica, ReplicaIndex as IrReplicaIndex,
