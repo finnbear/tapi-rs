@@ -1,9 +1,9 @@
 use super::{Error, Message};
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 pub(crate) struct Registry<M> {
-    inner: Arc<Mutex<Inner<M>>>,
+    inner: Arc<RwLock<Inner<M>>>,
 }
 
 impl<M> Default for Registry<M> {
@@ -15,7 +15,7 @@ impl<M> Default for Registry<M> {
 }
 
 struct Inner<M> {
-    callbacks: Vec<Arc<dyn Fn(usize, M) + Send + Sync>>,
+    callbacks: Vec<Arc<dyn Fn(usize, M) -> Option<M> + Send + Sync>>,
 }
 
 impl<M> Default for Inner<M> {
@@ -29,9 +29,9 @@ impl<M> Default for Inner<M> {
 impl<M> Registry<M> {
     pub(crate) fn channel(
         &self,
-        callback: impl Fn(usize, M) + Send + Sync + 'static,
+        callback: impl Fn(usize, M) -> Option<M> + Send + Sync + 'static,
     ) -> Channel<M> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.write().unwrap();
         let address = inner.callbacks.len();
         inner.callbacks.push(Arc::new(callback));
         Channel {
@@ -43,23 +43,7 @@ impl<M> Registry<M> {
 
 pub(crate) struct Channel<M> {
     address: usize,
-    inner: Arc<Mutex<Inner<M>>>,
-}
-
-impl<M: Message> Channel<M> {
-    fn send_impl(&self, address: usize, message: M) -> Result<(), Error> {
-        let inner = self.inner.lock().unwrap();
-        if let Some(callback) = inner.callbacks.get(address) {
-            let callback = Arc::clone(&callback);
-            let from = self.address;
-            std::thread::spawn(move || {
-                callback(from, message);
-            });
-            Ok(())
-        } else {
-            Err(Error::Unreachable)
-        }
-    }
+    inner: Arc<RwLock<Inner<M>>>,
 }
 
 impl<M: Message> super::Transport for Channel<M> {
@@ -74,11 +58,30 @@ impl<M: Message> super::Transport for Channel<M> {
         &self,
         address: Self::Address,
         message: Self::Message,
-    ) -> impl Future<Output = Result<(), Error>> + 'static {
-        std::future::ready(self.send_impl(address, message))
+    ) -> impl Future<Output = M> + 'static {
+        let inner = self.inner.read().unwrap();
+        let callback = inner.callbacks.get(address).map(Arc::clone);
+        drop(inner);
+        let from = self.address;
+        async move {
+            loop {
+                if let Some(callback) = callback.as_ref() {
+                    let reply = callback(from, message.clone());
+                    if let Some(reply) = reply {
+                        break reply;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100));
+            }
+        }
     }
 
     fn do_send(&self, address: Self::Address, message: Self::Message) {
-        let _ = self.send_impl(address, message);
+        let inner = self.inner.read().unwrap();
+        let callback = inner.callbacks.get(address).map(Arc::clone);
+        drop(inner);
+        if let Some(callback) = callback {
+            callback(self.address, message);
+        }
     }
 }

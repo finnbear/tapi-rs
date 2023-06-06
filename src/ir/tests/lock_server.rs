@@ -1,5 +1,8 @@
-use crate::{ChannelRegistry, ChannelTransport, IrClient, IrMessage};
-use std::sync::{Arc, Mutex};
+use crate::{ChannelRegistry, ChannelTransport, IrClient, IrMessage, IrReplicaIndex, Transport};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 #[tokio::test]
 async fn lock_server() {
@@ -15,28 +18,29 @@ async fn lock_server() {
         No,
     }
 
+    type Message = IrMessage<Op, Res>;
+
     let registry = ChannelRegistry::default();
 
-    let mut client = Arc::new(Mutex::new(
-        Option::<IrClient<ChannelTransport<IrMessage<Op, Res>>, Op, Res>>::None,
-    ));
-    let client_channel = {
-        let client = Arc::clone(&client);
-        registry.channel(move |from, message| {
-            client
-                .lock()
-                .unwrap()
-                .as_mut()
-                .unwrap()
-                .receive(from, message)
-        })
-    };
-    *client.lock().unwrap() = Some(IrClient::new(client_channel));
+    fn create_client(
+        registry: &ChannelRegistry<Message>,
+        membership: &HashMap<IrReplicaIndex, <ChannelTransport<Message> as Transport>::Address>,
+    ) -> Arc<Mutex<IrClient<ChannelTransport<Message>, Op, Res>>> {
+        Arc::new_cyclic(
+            |weak: &std::sync::Weak<Mutex<IrClient<ChannelTransport<Message>, Op, Res>>>| {
+                let weak = weak.clone();
+                let channel = registry.channel(move |from, message| {
+                    weak.upgrade()?.lock().unwrap().receive(from, message)
+                });
+                Mutex::new(IrClient::new(channel, membership.clone()))
+            },
+        )
+    }
+
+    let client = create_client(&registry, &HashMap::new());
 
     client
         .lock()
-        .unwrap()
-        .as_mut()
         .unwrap()
         .invoke_consensus(Op::Lock, |results| Res::Ok)
         .await;

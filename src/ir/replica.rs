@@ -2,6 +2,9 @@ use super::{Message, OpId, Record};
 use crate::{Transport, TransportMessage};
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub(crate) struct Index(usize);
+
 pub(crate) enum State {
     Normal,
     ViewChanging,

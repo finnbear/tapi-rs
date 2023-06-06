@@ -10,23 +10,23 @@ pub(crate) enum Message<O, R> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Propose<O> {
-    op_id: OpId,
-    op: O,
+    pub(crate) op_id: OpId,
+    pub(crate) op: O,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Reply<R> {
-    op_id: OpId,
-    result: R,
+    pub(crate) op_id: OpId,
+    pub(crate) result: R,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Finalize<R> {
-    op_id: OpId,
-    result: R,
+    pub(crate) op_id: OpId,
+    pub(crate) result: R,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Confirm {
-    op_id: OpId,
+    pub(crate) op_id: OpId,
 }

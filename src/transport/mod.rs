@@ -6,18 +6,20 @@ pub(crate) use channel::{Channel, Registry as ChannelRegistry};
 pub(crate) use error::Error;
 pub(crate) use message::Message;
 use std::future::Future;
-
 pub(crate) trait Transport {
-    type Address: 'static;
+    type Address: Copy + 'static;
     type Message: Message;
 
+    /// Get own address.
     fn address(&self) -> Self::Address;
+
+    /// Send/retry, ignoring any errors, until there is a reply.
     fn send(
         &self,
         address: Self::Address,
         message: Self::Message,
-    ) -> impl Future<Output = Result<(), Error>> + Send + 'static;
-    fn do_send(&self, address: Self::Address, message: Self::Message) {
-        tokio::spawn(self.send(address, message));
-    }
+    ) -> impl Future<Output = Self::Message> + Send + 'static;
+
+    /// Send once and don't wait for a reply.
+    fn do_send(&self, address: Self::Address, message: Self::Message);
 }

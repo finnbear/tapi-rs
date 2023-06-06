@@ -1,28 +1,50 @@
+use super::{error::Error, Message, OpId, Propose, ReplicaIndex};
 use crate::Transport;
 use rand::{thread_rng, Rng};
-use std::{future::Future, marker::PhantomData};
+use std::{
+    collections::HashMap,
+    future::Future,
+    marker::PhantomData,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
-use super::{error::Error, Message};
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(crate) struct Id(u64);
 
 pub(crate) struct Client<T: Transport<Message = Message<O, R>>, O, R> {
     transport: T,
-    client_id: u64,
-    operation_counter: u64,
+    id: Id,
+    membership: HashMap<ReplicaIndex, T::Address>,
+    operation_counter: AtomicU64,
     _spooky: PhantomData<(O, R)>,
 }
 
-impl<T: Transport<Message = Message<O, R>>, O, R> Client<T, O, R> {
-    pub(crate) fn new(transport: T) -> Self {
+impl<T: Transport<Message = Message<O, R>>, O: Clone, R> Client<T, O, R> {
+    pub(crate) fn new(transport: T, membership: HashMap<ReplicaIndex, T::Address>) -> Self {
         Self {
             transport,
-            client_id: thread_rng().gen(),
-            operation_counter: 0,
+            id: Id(thread_rng().gen()),
+            membership,
+            operation_counter: AtomicU64::new(0),
             _spooky: PhantomData,
         }
     }
 
-    pub(crate) fn invoke_inconsistent(&mut self, op: O) -> impl Future<Output = Result<(), Error>> {
-        std::future::ready(todo!())
+    pub(crate) fn invoke_inconsistent(&self, op: O) -> impl Future<Output = Result<(), Error>> {
+        let number = self.operation_counter.fetch_add(1, Ordering::Relaxed);
+        for &address in self.membership.values() {
+            self.transport.do_send(
+                address,
+                Message::Propose(Propose {
+                    op_id: OpId {
+                        client_id: self.id,
+                        number,
+                    },
+                    op: op.clone(),
+                }),
+            );
+        }
+        std::future::ready(Ok(()))
     }
 
     pub(crate) fn invoke_consensus(
@@ -33,5 +55,11 @@ impl<T: Transport<Message = Message<O, R>>, O, R> Client<T, O, R> {
         std::future::ready(todo!())
     }
 
-    pub(crate) fn receive(&mut self, sender: T::Address, message: Message<O, R>) {}
+    pub(crate) fn receive(
+        &mut self,
+        sender: T::Address,
+        message: Message<O, R>,
+    ) -> Option<Message<O, R>> {
+        None
+    }
 }
