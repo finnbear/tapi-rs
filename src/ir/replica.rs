@@ -1,7 +1,7 @@
 use super::{
     record::Consistency, Confirm, FinalizeConsensus, FinalizeInconsistent, Membership, Message,
-    OpId, ProposeConsensus, ProposeInconsistent, Record, RecordEntry, RecordState, ReplyConsensus,
-    ReplyInconsistent,
+    OpId, ProposeConsensus, ProposeInconsistent, Record, RecordEntry, RecordEntryState,
+    ReplyConsensus, ReplyInconsistent, View, ViewNumber,
 };
 use crate::{Transport, TransportMessage};
 use std::{
@@ -15,6 +15,13 @@ pub(crate) struct Index(pub usize);
 pub(crate) enum State {
     Normal,
     ViewChanging,
+    Recovering,
+}
+
+impl State {
+    pub(crate) fn is_normal(&self) -> bool {
+        matches!(self, Self::Normal)
+    }
 }
 
 pub(crate) trait Upcalls {
@@ -33,7 +40,7 @@ pub(crate) trait Upcalls {
 
 pub(crate) struct Replica<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
     index: Index,
-    membership: Membership<T>,
+    view: View<T>,
     upcalls: Mutex<U>,
     transport: T,
     state: State,
@@ -46,7 +53,10 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
             index,
             upcalls: Mutex::new(upcalls),
             transport,
-            membership,
+            view: View {
+                membership,
+                number: ViewNumber(0),
+            },
             state: State::Normal,
             record: Default::default(),
         }
@@ -58,59 +68,86 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
         message: Message<U::Op, U::Result>,
     ) -> Option<Message<U::Op, U::Result>> {
         match message {
-            Message::ProposeInconsistent(ProposeInconsistent { op_id, op }) => {
+            Message::ProposeInconsistent(ProposeInconsistent { op_id, op })
+                if self.state.is_normal() =>
+            {
                 let mut record = self.record.lock().unwrap();
 
-                record.entries.entry(op_id).or_insert(RecordEntry {
+                let entry = record.entries.entry(op_id).or_insert(RecordEntry {
                     op,
                     consistency: Consistency::Inconsistent,
                     result: None,
-                    state: RecordState::Tentative,
+                    state: RecordEntryState::Tentative,
                 });
 
-                return Some(Message::ReplyInconsistent(ReplyInconsistent { op_id }));
+                return Some(Message::ReplyInconsistent(ReplyInconsistent {
+                    op_id,
+                    view_number: self.view.number,
+                    state: entry.state,
+                }));
             }
-            Message::ProposeConsensus(ProposeConsensus { op_id, op }) => {
+            Message::ProposeConsensus(ProposeConsensus { op_id, op }) if self.state.is_normal() => {
                 let mut record = self.record.lock().unwrap();
 
-                let result = match record.entries.entry(op_id) {
-                    Entry::Occupied(entry) => entry.get().result.clone().unwrap(),
+                let (result, state) = match record.entries.entry(op_id) {
+                    Entry::Occupied(entry) => {
+                        let entry = entry.get();
+                        (entry.result.clone(), entry.state)
+                    }
                     Entry::Vacant(vacant) => {
                         let mut upcalls = self.upcalls.lock().unwrap();
-                        let result = upcalls.exec_consensus(&op);
-                        vacant.insert(RecordEntry {
+                        let entry = vacant.insert(RecordEntry {
+                            result: Some(upcalls.exec_consensus(&op)),
                             op,
                             consistency: Consistency::Consistent,
-                            result: Some(result.clone()),
-                            state: RecordState::Tentative,
+                            state: RecordEntryState::Tentative,
                         });
-                        result
+                        (entry.result.clone(), entry.state)
                     }
                 };
 
-                return Some(Message::ReplyConsensus(ReplyConsensus { op_id, result }));
+                if let Some(result) = result {
+                    return Some(Message::ReplyConsensus(ReplyConsensus {
+                        op_id,
+                        view_number: self.view.number,
+                        result,
+                        state,
+                    }));
+                }
             }
-            Message::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
+            Message::FinalizeInconsistent(FinalizeInconsistent { op_id })
+                if self.state.is_normal() =>
+            {
                 let mut record = self.record.lock().unwrap();
 
                 if let Some(entry) = record.entries.get_mut(&op_id) {
-                    entry.state = RecordState::Finalized;
+                    entry.state = RecordEntryState::Finalized;
                     let mut upcalls = self.upcalls.lock().unwrap();
                     upcalls.exec_inconsistent(&entry.op);
                     drop(record);
                 }
             }
-            Message::FinalizeConsensus(FinalizeConsensus { op_id, result }) => {
+            Message::FinalizeConsensus(FinalizeConsensus { op_id, result })
+                if self.state.is_normal() =>
+            {
                 let mut record = self.record.lock().unwrap();
                 if let Some(entry) = record.entries.get_mut(&op_id) {
-                    entry.state = RecordState::Finalized;
+                    entry.state = RecordEntryState::Finalized;
                     entry.result = Some(result);
                     drop(record);
-                    return Some(Message::Confirm(Confirm { op_id }));
+                    return Some(Message::Confirm(Confirm {
+                        op_id,
+                        view_number: self.view.number,
+                    }));
                 }
             }
             Message::ReplyInconsistent(_) | Message::ReplyConsensus(_) | Message::Confirm(_) => {
                 println!("unexpected message")
+            }
+            _ => {
+                if self.state.is_normal() {
+                    println!("unexpected message");
+                }
             }
         }
         None

@@ -1,11 +1,13 @@
 use super::OpId;
 use std::collections::HashMap;
 
+#[derive(Copy, Clone, Debug)]
 pub(crate) enum State {
     Tentative,
     Finalized,
 }
 
+#[derive(Copy, Clone, Debug)]
 pub(crate) enum Consistency {
     Inconsistent,
     Consistent,

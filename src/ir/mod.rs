@@ -5,6 +5,7 @@ mod message;
 mod op;
 mod record;
 mod replica;
+mod view;
 
 #[cfg(test)]
 mod tests;
@@ -17,7 +18,8 @@ pub(crate) use message::{
     ProposeInconsistent, ReplyConsensus, ReplyInconsistent,
 };
 pub(crate) use op::Id as OpId;
-pub(crate) use record::{Entry as RecordEntry, Record, State as RecordState};
+pub(crate) use record::{Consistency, Entry as RecordEntry, Record, State as RecordEntryState};
 pub(crate) use replica::{
     Index as ReplicaIndex, Replica, State as ReplicaState, Upcalls as ReplicaUpcalls,
 };
+pub(crate) use view::{Number as ViewNumber, View};

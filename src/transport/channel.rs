@@ -1,3 +1,5 @@
+use rand::{thread_rng, Rng};
+
 use super::{Error, Message};
 use std::future::Future;
 use std::sync::{Arc, RwLock};
@@ -81,6 +83,9 @@ impl<M: Message> super::Transport for Channel<M> {
         drop(inner);
         let from = self.address;
         async move {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                thread_rng().gen_range(1..5),
+            ));
             loop {
                 if let Some(callback) = callback.as_ref() {
                     if Self::should_drop(from, address) {
@@ -99,7 +104,9 @@ impl<M: Message> super::Transport for Channel<M> {
                 } else {
                     println!("unknown address {address:?}");
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(100));
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    thread_rng().gen_range(10..15),
+                ));
             }
         }
     }
