@@ -1,5 +1,5 @@
 use super::{error::Error, Message, OpId, Propose, ReplicaIndex};
-use crate::Transport;
+use crate::{util::join_n, Transport};
 use rand::{thread_rng, Rng};
 use std::{
     collections::HashMap,
@@ -33,18 +33,24 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R> Client<T, O, R> {
     pub(crate) fn invoke_inconsistent(&self, op: O) -> impl Future<Output = Result<(), Error>> {
         let number = self.operation_counter.fetch_add(1, Ordering::Relaxed);
         let mut replies = HashMap::<ReplicaIndex, R>::new();
-        for &address in self.membership.values() {
-            self.transport.send(
-                address,
-                Message::Propose(Propose {
-                    op_id: OpId {
-                        client_id: self.id,
-                        number,
-                    },
-                    op: op.clone(),
-                }),
-            );
-        }
+        let results = join_n(
+            self.membership.iter().map(|(index, address)| {
+                (
+                    index,
+                    self.transport.send(
+                        *address,
+                        Message::Propose(Propose {
+                            op_id: OpId {
+                                client_id: self.id,
+                                number,
+                            },
+                            op: op.clone(),
+                        }),
+                    ),
+                )
+            }),
+            1,
+        );
         std::future::ready(Ok(()))
     }
 

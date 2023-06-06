@@ -10,7 +10,7 @@ use std::task::{ready, Context, Poll};
 pin_project! {
     /// Future for the [`join_n`] function.
     #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct JoinN<K, F: Future> {
+    pub(crate) struct JoinN<K, F: Future> {
         #[pin]
         active: FuturesOrdered<KeyedFuture<K, F>>,
         output: HashMap<K, F::Output>,
@@ -36,7 +36,7 @@ impl<K, F: Future> Future for KeyedFuture<K, F> {
     }
 }
 
-pub fn join_n<K, F, I: IntoIterator<Item = (K, F)>>(iter: I, n: usize) -> JoinN<K, F>
+pub(crate) fn join_n<K, F, I: IntoIterator<Item = (K, F)>>(iter: I, n: usize) -> JoinN<K, F>
 where
     F: Future,
 {
