@@ -18,7 +18,7 @@ pin_project! {
     }
 }
 
-trait Until<K, O> {
+pub(crate) trait Until<K, O> {
     fn until(&self, results: &HashMap<K, O>) -> bool;
 }
 
@@ -68,8 +68,8 @@ where
     }
 
     JoinUntil {
-        active,
         output: HashMap::with_capacity(active.len()),
+        active,
         until,
     }
 }

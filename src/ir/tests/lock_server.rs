@@ -15,7 +15,7 @@ async fn lock_server() {
         Unlock,
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, PartialEq)]
     enum Res {
         Ok,
         No,

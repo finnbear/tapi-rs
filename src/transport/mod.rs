@@ -14,11 +14,11 @@ pub(crate) trait Transport: Clone {
     fn address(&self) -> Self::Address;
 
     /// Send/retry, ignoring any errors, until there is a reply.
-    fn send(
+    fn send<R: TryFrom<Self::Message>>(
         &self,
         address: Self::Address,
         message: Self::Message,
-    ) -> impl Future<Output = Self::Message> + Send + 'static;
+    ) -> impl Future<Output = R> + Send + 'static;
 
     /// Send once and don't wait for a reply.
     fn do_send(&self, address: Self::Address, message: Self::Message);

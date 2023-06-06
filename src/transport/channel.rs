@@ -63,11 +63,11 @@ impl<M: Message> super::Transport for Channel<M> {
         self.address
     }
 
-    fn send(
+    fn send<R: TryFrom<M>>(
         &self,
         address: Self::Address,
         message: Self::Message,
-    ) -> impl Future<Output = M> + 'static {
+    ) -> impl Future<Output = R> + 'static {
         let inner = self.inner.read().unwrap();
         let callback = inner.callbacks.get(address).map(Arc::clone);
         drop(inner);
@@ -77,7 +77,9 @@ impl<M: Message> super::Transport for Channel<M> {
                 if let Some(callback) = callback.as_ref() {
                     let reply = callback(from, message.clone());
                     if let Some(reply) = reply {
-                        break reply;
+                        if let Ok(result) = reply.try_into() {
+                            break result;
+                        }
                     }
                 } else {
                     println!("unknown address {address:?}");

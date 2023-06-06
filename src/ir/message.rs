@@ -1,6 +1,6 @@
 use super::OpId;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, derive_more::TryInto)]
 pub(crate) enum Message<O, R> {
     ProposeInconsistent(ProposeInconsistent<O>),
     ProposeConsensus(ProposeConsensus<O>),

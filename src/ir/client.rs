@@ -2,7 +2,11 @@ use super::{
     error::Error, FinalizeInconsistent, Membership, Message, OpId, ProposeConsensus,
     ProposeInconsistent, ReplicaIndex,
 };
-use crate::{util::join_until, Transport};
+use crate::{
+    ir::{FinalizeConsensus, Replica, ReplyConsensus},
+    util::join_until,
+    Transport,
+};
 use rand::{thread_rng, Rng};
 use std::{
     collections::HashMap,
@@ -28,7 +32,7 @@ pub(crate) struct Client<T: Transport<Message = Message<O, R>>, O, R> {
     _spooky: PhantomData<(O, R)>,
 }
 
-impl<T: Transport<Message = Message<O, R>>, O: Clone, R> Client<T, O, R> {
+impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq> Client<T, O, R> {
     pub(crate) fn new(membership: Membership<T>, transport: T) -> Self {
         Self {
             transport,
@@ -39,8 +43,12 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R> Client<T, O, R> {
         }
     }
 
+    fn next_number(&self) -> u64 {
+        self.operation_counter.fetch_add(1, Ordering::Relaxed)
+    }
+
     pub(crate) fn invoke_inconsistent(&self, op: O) -> impl Future<Output = Result<(), Error>> {
-        let number = self.operation_counter.fetch_add(1, Ordering::Relaxed);
+        let number = self.next_number();
         let op_id = OpId {
             client_id: self.id,
             number,
@@ -85,19 +93,26 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R> Client<T, O, R> {
         op: O,
         decide: impl Fn(Vec<R>) -> R,
     ) -> impl Future<Output = Result<R, Error>> {
-        /*
-        let number = self.operation_counter.fetch_add(1, Ordering::Relaxed);
+        let number = self.next_number();
         let op_id = OpId {
             client_id: self.id,
             number,
         };
-        let mut replies = HashMap::<ReplicaIndex, R>::new();
+
+        fn matching<R: PartialEq>(replies: &HashMap<ReplicaIndex, ReplyConsensus<R>>) -> bool {
+            let (_, one) = replies.iter().next().unwrap();
+            replies.iter().all(|(_, other)| other.result == one.result)
+        }
+
+        let f_plus_one = self.membership.f_plus_one();
+        let three_over_two_f_plus_one = self.membership.three_over_two_f_plus_one();
+
         let results = join_until(
             self.membership.iter().map(|(index, address)| {
                 (
-                    *index,
-                    self.transport.send(
-                        *address,
+                    index,
+                    self.transport.send::<ReplyConsensus<R>>(
+                        address,
                         Message::ProposeConsensus(ProposeConsensus {
                             op_id,
                             op: op.clone(),
@@ -105,8 +120,9 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R> Client<T, O, R> {
                     ),
                 )
             }),
-            |results| {
-                self.membership.len() / 2 + 1
+            move |results: &HashMap<ReplicaIndex, ReplyConsensus<R>>| {
+                (results.len() >= three_over_two_f_plus_one && matching(results))
+                    || results.len() >= f_plus_one
             },
         );
 
@@ -115,19 +131,25 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R> Client<T, O, R> {
 
         async move {
             let results = results.await;
-            for (_, result) in results {
-                assert!(matches!(result, Message::ReplyInconsistent(_)));
+            if matching(&results) {
+                // Fast path.
+                let result = results.into_iter().next().unwrap().1.result;
+                for (_, address) in membership {
+                    transport.do_send(
+                        address,
+                        Message::FinalizeConsensus(FinalizeConsensus {
+                            op_id,
+                            result: result.clone(),
+                        }),
+                    );
+                }
+                return Ok(result);
             }
-            for address in membership {
-                transport.do_send(
-                    address,
-                    Message::FinalizeInconsistent(FinalizeInconsistent { op_id }),
-                );
-            }
-            Ok(())
+
+            todo!()
+
+            //Ok(())
         }
-        */
-        std::future::ready(())
     }
 
     pub(crate) fn receive(

@@ -39,7 +39,7 @@ impl<T: Transport> Membership<T> {
         &self,
     ) -> std::iter::Map<
         std::iter::Enumerate<std::slice::Iter<'_, T::Address>>,
-        fn((usize, &'_ T::Address)) -> (ReplicaIndex, T::Address),
+        for<'a> fn((usize, &'a T::Address)) -> (ReplicaIndex, T::Address),
     > {
         (&self).into_iter()
     }
@@ -63,7 +63,7 @@ impl<'a, T: Transport> IntoIterator for &'a Membership<T> {
     type Item = (ReplicaIndex, T::Address);
     type IntoIter = std::iter::Map<
         std::iter::Enumerate<std::slice::Iter<'a, T::Address>>,
-        fn((usize, &'a T::Address)) -> Self::Item,
+        for<'b> fn((usize, &'b T::Address)) -> Self::Item,
     >;
     fn into_iter(self) -> Self::IntoIter {
         self.members
