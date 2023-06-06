@@ -17,9 +17,9 @@ pub(crate) trait Transport: Clone {
     fn send<R: TryFrom<Self::Message>>(
         &self,
         address: Self::Address,
-        message: Self::Message,
+        message: impl Into<Self::Message>,
     ) -> impl Future<Output = R> + Send + 'static;
 
     /// Send once and don't wait for a reply.
-    fn do_send(&self, address: Self::Address, message: Self::Message);
+    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message>);
 }

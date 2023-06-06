@@ -60,10 +60,10 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq> Clie
                     index,
                     self.transport.send(
                         address,
-                        Message::ProposeInconsistent(ProposeInconsistent {
+                        ProposeInconsistent {
                             op_id,
                             op: op.clone(),
-                        }),
+                        },
                     ),
                 )
             }),
@@ -79,10 +79,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq> Clie
                 assert!(matches!(result, Message::ReplyInconsistent(_)));
             }
             for (_, address) in membership {
-                transport.do_send(
-                    address,
-                    Message::FinalizeInconsistent(FinalizeInconsistent { op_id }),
-                );
+                transport.do_send(address, FinalizeInconsistent { op_id });
             }
             Ok(())
         }
@@ -113,10 +110,10 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq> Clie
                     index,
                     self.transport.send::<ReplyConsensus<R>>(
                         address,
-                        Message::ProposeConsensus(ProposeConsensus {
+                        ProposeConsensus {
                             op_id,
                             op: op.clone(),
-                        }),
+                        },
                     ),
                 )
             }),
@@ -137,10 +134,10 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq> Clie
                 for (_, address) in membership {
                     transport.do_send(
                         address,
-                        Message::FinalizeConsensus(FinalizeConsensus {
+                        FinalizeConsensus {
                             op_id,
                             result: result.clone(),
-                        }),
+                        },
                     );
                 }
                 return Ok(result);

@@ -66,8 +66,9 @@ impl<M: Message> super::Transport for Channel<M> {
     fn send<R: TryFrom<M>>(
         &self,
         address: Self::Address,
-        message: Self::Message,
+        message: impl Into<Self::Message>,
     ) -> impl Future<Output = R> + 'static {
+        let message = message.into();
         let inner = self.inner.read().unwrap();
         let callback = inner.callbacks.get(address).map(Arc::clone);
         drop(inner);
@@ -89,12 +90,12 @@ impl<M: Message> super::Transport for Channel<M> {
         }
     }
 
-    fn do_send(&self, address: Self::Address, message: Self::Message) {
+    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message>) {
         let inner = self.inner.read().unwrap();
         let callback = inner.callbacks.get(address).map(Arc::clone);
         drop(inner);
         if let Some(callback) = callback {
-            callback(self.address, message);
+            callback(self.address, message.into());
         }
     }
 }
