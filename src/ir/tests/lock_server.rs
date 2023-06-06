@@ -39,10 +39,15 @@ async fn lock_server() {
                 _ => panic!(),
             }
         }
-        fn exec_consensus(&mut self, op: &Self::Op) {
+        fn exec_consensus(&mut self, op: &Self::Op) -> Self::Result {
             match op {
                 Op::Lock => {
-                    self.locked = true;
+                    if self.locked {
+                        Res::No
+                    } else {
+                        self.locked = true;
+                        Res::Ok
+                    }
                 }
                 _ => panic!(),
             }
@@ -101,10 +106,29 @@ async fn lock_server() {
 
     let client = create_client(&registry, &membership);
 
-    client
-        .lock()
-        .unwrap()
-        .invoke_consensus(Op::Lock, |results| Res::No)
-        .await;
+    assert_eq!(
+        client
+            .lock()
+            .unwrap()
+            .invoke_consensus(Op::Lock, |results| Res::No)
+            .await,
+        Ok(Res::Ok)
+    );
+    assert_eq!(
+        client
+            .lock()
+            .unwrap()
+            .invoke_consensus(Op::Lock, |results| Res::No)
+            .await,
+        Ok(Res::No)
+    );
     client.lock().unwrap().invoke_inconsistent(Op::Unlock).await;
+    assert_eq!(
+        client
+            .lock()
+            .unwrap()
+            .invoke_consensus(Op::Lock, |results| Res::No)
+            .await,
+        Ok(Res::Ok)
+    );
 }
