@@ -1,4 +1,4 @@
-use super::{OpId, Record};
+use super::{Message, OpId, Record};
 use crate::{Transport, TransportMessage};
 use std::collections::{HashMap, HashSet};
 
@@ -21,8 +21,12 @@ pub(crate) trait Upcalls {
     ) -> Record<Self::Op, Self::Result>;
 }
 
-pub(crate) struct Replica<T: Transport, O, R> {
+pub(crate) struct Replica<T: Transport<Message = Message<O, R>>, O, R> {
     transport: T,
     state: State,
     record: Record<O, R>,
+}
+
+impl<T: Transport<Message = Message<O, R>>, O, R> Replica<T, O, R> {
+    pub(crate) fn receive(&self, address: T::Address, message: Message<O, R>) {}
 }

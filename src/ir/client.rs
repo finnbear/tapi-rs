@@ -32,4 +32,6 @@ impl<T: Transport<Message = Message<O, R>>, O, R> Client<T, O, R> {
     ) -> impl Future<Output = Result<R, Error>> {
         std::future::ready(todo!())
     }
+
+    pub(crate) fn receive(&mut self, sender: T::Address, message: Message<O, R>) {}
 }

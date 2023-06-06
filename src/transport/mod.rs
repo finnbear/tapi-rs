@@ -16,8 +16,8 @@ pub(crate) trait Transport {
         &self,
         address: Self::Address,
         message: Self::Message,
-    ) -> impl Future<Output = Result<(), Error>> + 'static;
-    fn receive(
-        &mut self,
-    ) -> impl Future<Output = Result<(Self::Address, Self::Message), Error>> + '_;
+    ) -> impl Future<Output = Result<(), Error>> + Send + 'static;
+    fn do_send(&self, address: Self::Address, message: Self::Message) {
+        tokio::spawn(self.send(address, message));
+    }
 }

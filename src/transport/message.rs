@@ -1,3 +1,3 @@
-pub(crate) trait Message: Clone {}
+pub(crate) trait Message: Clone + Send + 'static {}
 
-impl<T: Clone> Message for T {}
+impl<T: Clone + Send + 'static> Message for T {}
