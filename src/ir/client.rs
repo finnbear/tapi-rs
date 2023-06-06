@@ -3,7 +3,7 @@ use super::{
     ProposeInconsistent, ReplicaIndex,
 };
 use crate::{
-    ir::{FinalizeConsensus, Replica, ReplyConsensus},
+    ir::{Confirm, FinalizeConsensus, Replica, ReplyConsensus},
     util::join_until,
     Transport,
 };
@@ -140,12 +140,33 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq> Clie
                         },
                     );
                 }
-                return Ok(result);
+                Ok(result)
+            } else {
+                // Slow path.
+                let result = decide(
+                    results
+                        .into_values()
+                        .map(|rc| rc.result)
+                        .collect::<Vec<_>>(),
+                );
+                join_until(
+                    membership.iter().map(|(index, address)| {
+                        (
+                            index,
+                            transport.send::<Confirm>(
+                                address,
+                                FinalizeConsensus {
+                                    op_id,
+                                    result: result.clone(),
+                                },
+                            ),
+                        )
+                    }),
+                    f_plus_one,
+                )
+                .await;
+                Ok(result)
             }
-
-            todo!()
-
-            //Ok(())
         }
     }
 
