@@ -30,13 +30,14 @@ impl<T: Transport> Membership<T> {
         self.members.len()
     }
 
+    #[allow(clippy::type_complexity)]
     pub(crate) fn iter(
         &self,
     ) -> std::iter::Map<
         std::iter::Enumerate<std::slice::Iter<'_, T::Address>>,
         for<'a> fn((usize, &'a T::Address)) -> (ReplicaIndex, T::Address),
     > {
-        (&self).into_iter()
+        self.into_iter()
     }
 }
 

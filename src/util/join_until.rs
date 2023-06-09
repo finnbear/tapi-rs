@@ -96,7 +96,7 @@ where
                 .as_pin_mut()
                 .map(|s| s.is_elapsed())
                 .unwrap_or(false);
-            if !this.until.until(&this.output, elapsed) {
+            if !this.until.until(this.output, elapsed) {
                 match this.active.as_mut().poll_next(cx) {
                     Poll::Ready(Some((k, x))) => {
                         this.output.insert(k, x);

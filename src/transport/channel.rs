@@ -17,6 +17,7 @@ impl<M> Default for Registry<M> {
 }
 
 struct Inner<M> {
+    #[allow(clippy::type_complexity)]
     callbacks: Vec<Arc<dyn Fn(usize, M) -> Option<M> + Send + Sync>>,
 }
 
