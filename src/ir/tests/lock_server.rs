@@ -67,7 +67,7 @@ async fn lock_server() {
 
     let registry = ChannelRegistry::default();
 
-    const REPLICAS: usize = 9;
+    const REPLICAS: usize = 5;
 
     let membership = IrMembership::new((0..REPLICAS).collect::<Vec<_>>());
 

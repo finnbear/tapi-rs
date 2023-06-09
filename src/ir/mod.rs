@@ -21,6 +21,6 @@ pub(crate) use message::{
 pub(crate) use op::Id as OpId;
 pub(crate) use record::{Consistency, Entry as RecordEntry, Record, State as RecordEntryState};
 pub(crate) use replica::{
-    Index as ReplicaIndex, Replica, State as ReplicaState, Upcalls as ReplicaUpcalls,
+    Index as ReplicaIndex, Replica, Status as ReplicaStatus, Upcalls as ReplicaUpcalls,
 };
 pub(crate) use view::{Number as ViewNumber, View};

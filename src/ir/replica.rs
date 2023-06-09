@@ -8,24 +8,25 @@ use crate::{Transport, TransportMessage};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) struct Index(pub usize);
 
-pub(crate) enum State {
+pub(crate) enum Status {
     Normal,
     ViewChanging,
     Recovering,
 }
 
-impl State {
+impl Status {
     pub(crate) fn is_normal(&self) -> bool {
         matches!(self, Self::Normal)
     }
 }
 
-pub(crate) trait Upcalls {
+pub(crate) trait Upcalls: Send + 'static {
     type Op: TransportMessage;
     type Result: TransportMessage;
 
@@ -51,31 +52,71 @@ struct Inner<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
 }
 
 struct Sync<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
-    state: State,
+    status: Status,
     view: View<T>,
     lastest_normal_view: ViewNumber,
+    view_change_timeout: Instant,
     upcalls: U,
     record: Record<U::Op, U::Result>,
 }
 
 impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T> {
+    const VIEW_CHANGE_INTERVAL: Duration = Duration::from_millis(500);
+
     pub(crate) fn new(index: Index, membership: Membership<T>, upcalls: U, transport: T) -> Self {
-        Self {
+        let ret = Self {
             index,
             inner: Arc::new(Inner {
                 transport,
                 sync: Mutex::new(Sync {
-                    state: State::Normal,
+                    status: Status::Normal,
                     view: View {
                         membership,
                         number: ViewNumber(0),
                     },
                     lastest_normal_view: ViewNumber(0),
+                    view_change_timeout: Instant::now() + Self::VIEW_CHANGE_INTERVAL,
                     upcalls,
                     record: Record::default(),
                 }),
             }),
-        }
+        };
+        ret.tick();
+        ret
+    }
+    fn tick(&self) {
+        let my_index = self.index;
+        let inner = Arc::clone(&self.inner);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+
+                let now = Instant::now();
+                let mut sync = inner.sync.lock().unwrap();
+                if now >= sync.view_change_timeout {
+                    if sync.status.is_normal() {
+                        sync.status = Status::ViewChanging;
+                    }
+                    sync.view.number.0 += 1;
+                    sync.view_change_timeout = now + Self::VIEW_CHANGE_INTERVAL;
+
+                    for (index, address) in &sync.view.membership {
+                        if index == my_index {
+                            continue;
+                        }
+                        inner.transport.do_send(
+                            address,
+                            Message::DoViewChange(DoViewChange {
+                                record: (index == sync.view.leader_index())
+                                    .then(|| sync.record.clone()),
+                                view_number: sync.view.number,
+                                latest_normal_view: sync.lastest_normal_view,
+                            }),
+                        )
+                    }
+                }
+            }
+        });
     }
 
     pub(crate) fn receive(
@@ -86,7 +127,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
         match message {
             Message::RequestUnlogged(RequestUnlogged { op }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
-                if sync.state.is_normal() {
+                if sync.status.is_normal() {
                     let result = sync.upcalls.exec_unlogged(op);
                     return Some(Message::ReplyUnlogged(super::ReplyUnlogged { result }));
                 }
@@ -94,7 +135,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
             Message::ProposeInconsistent(ProposeInconsistent { op_id, op }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
-                if sync.state.is_normal() {
+                if sync.status.is_normal() {
                     let entry = sync.record.entries.entry(op_id).or_insert(RecordEntry {
                         op,
                         consistency: Consistency::Inconsistent,
@@ -112,7 +153,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
             Message::ProposeConsensus(ProposeConsensus { op_id, op }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
-                if sync.state.is_normal() {
+                if sync.status.is_normal() {
                     let (result, state) = match sync.record.entries.entry(op_id) {
                         Entry::Occupied(entry) => {
                             let entry = entry.get();
@@ -142,7 +183,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
             Message::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
-                if sync.state.is_normal() {
+                if sync.status.is_normal() {
                     if let Some(entry) = sync.record.entries.get_mut(&op_id) {
                         entry.state = RecordEntryState::Finalized;
                         sync.upcalls.exec_inconsistent(&entry.op);
@@ -151,7 +192,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
             }
             Message::FinalizeConsensus(FinalizeConsensus { op_id, result }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
-                if sync.state.is_normal() {
+                if sync.status.is_normal() {
                     if let Some(entry) = sync.record.entries.get_mut(&op_id) {
                         entry.state = RecordEntryState::Finalized;
                         entry.result = Some(result);
@@ -174,11 +215,11 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
                 if view_number > sync.view.number
-                    || (view_number == sync.view.number || !sync.state.is_normal())
+                    || (view_number == sync.view.number || !sync.status.is_normal())
                 {
                     sync.record = new_record;
                     sync.upcalls.sync(&sync.record);
-                    sync.state = State::Normal;
+                    sync.status = Status::Normal;
                     sync.view.number = view_number;
                     sync.lastest_normal_view = view_number;
                     // TODO: Persist view info.

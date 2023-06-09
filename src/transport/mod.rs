@@ -6,8 +6,8 @@ pub(crate) use channel::{Channel, Registry as ChannelRegistry};
 pub(crate) use error::Error;
 pub(crate) use message::Message;
 use std::{fmt::Debug, future::Future};
-pub(crate) trait Transport: Clone {
-    type Address: Copy + Debug + 'static;
+pub(crate) trait Transport: Clone + Send + Sync + 'static {
+    type Address: Copy + Debug + Send + 'static;
     type Message: Message;
 
     /// Get own address.
