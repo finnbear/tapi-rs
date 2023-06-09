@@ -12,7 +12,7 @@ mod tests;
 
 pub(crate) use client::{Client, Id as ClientId};
 pub(crate) use error::Error;
-pub(crate) use membership::Membership;
+pub(crate) use membership::{Membership, Size as MembershipSize};
 pub(crate) use message::{
     Confirm, FinalizeConsensus, FinalizeInconsistent, Message, ProposeConsensus,
     ProposeInconsistent, ReplyConsensus, ReplyInconsistent,

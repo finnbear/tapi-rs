@@ -122,7 +122,7 @@ async fn lock_server() {
             .unwrap()
             .invoke_consensus(Op::Lock, &decide_lock)
             .await,
-        Ok(Res::Ok)
+        Res::Ok
     );
     assert_eq!(
         client
@@ -130,7 +130,7 @@ async fn lock_server() {
             .unwrap()
             .invoke_consensus(Op::Lock, &decide_lock)
             .await,
-        Ok(Res::No)
+        Res::No
     );
     client.lock().unwrap().invoke_inconsistent(Op::Unlock).await;
     assert_eq!(
@@ -139,6 +139,6 @@ async fn lock_server() {
             .unwrap()
             .invoke_consensus(Op::Lock, &decide_lock)
             .await,
-        Ok(Res::Ok)
+        Res::Ok
     );
 }

@@ -6,6 +6,9 @@ use std::hash::Hash;
 use std::mem;
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
+use std::time::Duration;
+use tokio::select;
+use tokio::time::Sleep;
 
 pin_project! {
     /// Future for the [`join_n`] function.
@@ -13,24 +16,26 @@ pin_project! {
     pub(crate) struct JoinUntil<K, F: Future, U: Until<K, F::Output>> {
         #[pin]
         active: FuturesOrdered<KeyedFuture<K, F>>,
+        #[pin]
+        timeout: Option<Sleep>,
         output: HashMap<K, F::Output>,
         until: U
     }
 }
 
 pub(crate) trait Until<K, O> {
-    fn until(&self, results: &HashMap<K, O>) -> bool;
+    fn until(&self, results: &HashMap<K, O>, timeout: bool) -> bool;
 }
 
 impl<K, O> Until<K, O> for usize {
-    fn until(&self, results: &HashMap<K, O>) -> bool {
-        results.len() >= *self
+    fn until(&self, results: &HashMap<K, O>, timeout: bool) -> bool {
+        timeout || results.len() >= *self
     }
 }
 
-impl<K, O, F: Fn(&HashMap<K, O>) -> bool> Until<K, O> for F {
-    fn until(&self, results: &HashMap<K, O>) -> bool {
-        self(results)
+impl<K, O, F: Fn(&HashMap<K, O>, bool) -> bool> Until<K, O> for F {
+    fn until(&self, results: &HashMap<K, O>, timeout: bool) -> bool {
+        self(results, timeout)
     }
 }
 
@@ -55,6 +60,7 @@ impl<K, F: Future> Future for KeyedFuture<K, F> {
 pub(crate) fn join_until<K, F, I: IntoIterator<Item = (K, F)>, U: Until<K, F::Output>>(
     iter: I,
     until: U,
+    timeout: Option<Duration>,
 ) -> JoinUntil<K, F, U>
 where
     F: Future,
@@ -71,6 +77,7 @@ where
         output: HashMap::with_capacity(active.len()),
         active,
         until,
+        timeout: timeout.map(tokio::time::sleep),
     }
 }
 
@@ -83,10 +90,35 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
         Poll::Ready(loop {
-            if !this.until.until(&this.output) {
-                if let Some((k, x)) = ready!(this.active.as_mut().poll_next(cx)) {
-                    this.output.insert(k, x);
-                    continue;
+            let elapsed = this
+                .timeout
+                .as_mut()
+                .as_pin_mut()
+                .map(|s| s.is_elapsed())
+                .unwrap_or(false);
+            if !this.until.until(&this.output, elapsed) {
+                match this.active.as_mut().poll_next(cx) {
+                    Poll::Ready(Some((k, x))) => {
+                        this.output.insert(k, x);
+                        continue;
+                    }
+                    Poll::Ready(None) => {
+                        // Done with all futures
+                    }
+                    Poll::Pending => {
+                        if let Some(timeout) = this.timeout.as_mut().as_pin_mut() && !elapsed {
+                            if timeout.poll(cx).is_ready() {
+                                // Timeout is done, check again
+                                continue;
+                            } else {
+                                // Wait for timeout too
+                                return Poll::Pending
+                            }
+                        } else {
+                            // No timeout
+                            return Poll::Pending
+                        }
+                    }
                 }
             }
 

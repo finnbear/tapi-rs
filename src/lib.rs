@@ -1,6 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(return_position_impl_trait_in_trait)]
 #![feature(int_roundings)]
+#![feature(let_chains)]
 #![allow(unused)]
 
 mod ir;

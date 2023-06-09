@@ -2,6 +2,10 @@ use crate::transport::Transport;
 
 use super::ReplicaIndex;
 
+/// Internally stores 'f'
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub(crate) struct Size(usize);
+
 #[derive(Clone, Debug)]
 pub(crate) struct Membership<T: Transport> {
     members: Vec<T::Address>,
@@ -18,17 +22,8 @@ impl<T: Transport> Membership<T> {
         self.members.get(index.0).cloned()
     }
 
-    pub(crate) fn f(&self) -> usize {
-        let two_f = self.members.len() - 1;
-        two_f / 2
-    }
-
-    pub(crate) fn f_plus_one(&self) -> usize {
-        self.f() + 1
-    }
-
-    pub(crate) fn three_over_two_f_plus_one(&self) -> usize {
-        (self.f() * 3).div_ceil(2) + 1
+    pub(crate) fn size(&self) -> Size {
+        Size((self.members.len() - 1) / 2)
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -70,5 +65,19 @@ impl<'a, T: Transport> IntoIterator for &'a Membership<T> {
             .iter()
             .enumerate()
             .map(|(i, a)| (ReplicaIndex(i), *a))
+    }
+}
+
+impl Size {
+    pub(crate) fn f(&self) -> usize {
+        self.0
+    }
+
+    pub(crate) fn f_plus_one(&self) -> usize {
+        self.f() + 1
+    }
+
+    pub(crate) fn three_over_two_f_plus_one(&self) -> usize {
+        (self.f() * 3).div_ceil(2) + 1
     }
 }
