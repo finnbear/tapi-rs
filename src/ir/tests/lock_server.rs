@@ -31,6 +31,9 @@ async fn lock_server() {
         type Op = Op;
         type Result = Res;
 
+        fn exec_unlogged(&mut self, op: Self::Op) -> Self::Result {
+            unreachable!();
+        }
         fn exec_inconsistent(&mut self, op: &Self::Op) {
             match op {
                 Op::Unlock => {
@@ -52,7 +55,7 @@ async fn lock_server() {
                 _ => panic!(),
             }
         }
-        fn sync(&mut self, record: IrRecord<Self::Op, Self::Result>) {}
+        fn sync(&mut self, record: &IrRecord<Self::Op, Self::Result>) {}
         fn merge(
             &mut self,
             d: HashMap<IrOpId, Self::Op>,

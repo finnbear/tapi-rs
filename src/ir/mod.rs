@@ -14,8 +14,9 @@ pub(crate) use client::{Client, Id as ClientId};
 pub(crate) use error::Error;
 pub(crate) use membership::{Membership, Size as MembershipSize};
 pub(crate) use message::{
-    Confirm, FinalizeConsensus, FinalizeInconsistent, Message, ProposeConsensus,
-    ProposeInconsistent, ReplyConsensus, ReplyInconsistent,
+    Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent, Message, ProposeConsensus,
+    ProposeInconsistent, ReplyConsensus, ReplyInconsistent, ReplyUnlogged, RequestUnlogged,
+    StartView,
 };
 pub(crate) use op::Id as OpId;
 pub(crate) use record::{Consistency, Entry as RecordEntry, Record, State as RecordEntryState};

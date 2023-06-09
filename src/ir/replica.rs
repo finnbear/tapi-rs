@@ -1,12 +1,13 @@
 use super::{
-    record::Consistency, Confirm, FinalizeConsensus, FinalizeInconsistent, Membership, Message,
-    OpId, ProposeConsensus, ProposeInconsistent, Record, RecordEntry, RecordEntryState,
-    ReplyConsensus, ReplyInconsistent, View, ViewNumber,
+    record::Consistency, Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent,
+    Membership, Message, OpId, ProposeConsensus, ProposeInconsistent, Record, RecordEntry,
+    RecordEntryState, ReplyConsensus, ReplyInconsistent, RequestUnlogged, StartView, View,
+    ViewNumber,
 };
 use crate::{Transport, TransportMessage};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -28,9 +29,10 @@ pub(crate) trait Upcalls {
     type Op: TransportMessage;
     type Result: TransportMessage;
 
+    fn exec_unlogged(&mut self, op: Self::Op) -> Self::Result;
     fn exec_inconsistent(&mut self, op: &Self::Op);
     fn exec_consensus(&mut self, op: &Self::Op) -> Self::Result;
-    fn sync(&mut self, record: Record<Self::Op, Self::Result>);
+    fn sync(&mut self, record: &Record<Self::Op, Self::Result>);
     fn merge(
         &mut self,
         d: HashMap<OpId, Self::Op>,
@@ -40,25 +42,39 @@ pub(crate) trait Upcalls {
 
 pub(crate) struct Replica<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
     index: Index,
-    view: View<T>,
-    upcalls: Mutex<U>,
+    inner: Arc<Inner<U, T>>,
+}
+
+struct Inner<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
     transport: T,
+    sync: Mutex<Sync<U, T>>,
+}
+
+struct Sync<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
     state: State,
-    record: Mutex<Record<U::Op, U::Result>>,
+    view: View<T>,
+    lastest_normal_view: ViewNumber,
+    upcalls: U,
+    record: Record<U::Op, U::Result>,
 }
 
 impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T> {
     pub(crate) fn new(index: Index, membership: Membership<T>, upcalls: U, transport: T) -> Self {
         Self {
             index,
-            upcalls: Mutex::new(upcalls),
-            transport,
-            view: View {
-                membership,
-                number: ViewNumber(0),
-            },
-            state: State::Normal,
-            record: Default::default(),
+            inner: Arc::new(Inner {
+                transport,
+                sync: Mutex::new(Sync {
+                    state: State::Normal,
+                    view: View {
+                        membership,
+                        number: ViewNumber(0),
+                    },
+                    lastest_normal_view: ViewNumber(0),
+                    upcalls,
+                    record: Record::default(),
+                }),
+            }),
         }
     }
 
@@ -68,86 +84,108 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
         message: Message<U::Op, U::Result>,
     ) -> Option<Message<U::Op, U::Result>> {
         match message {
-            Message::ProposeInconsistent(ProposeInconsistent { op_id, op })
-                if self.state.is_normal() =>
-            {
-                let mut record = self.record.lock().unwrap();
-
-                let entry = record.entries.entry(op_id).or_insert(RecordEntry {
-                    op,
-                    consistency: Consistency::Inconsistent,
-                    result: None,
-                    state: RecordEntryState::Tentative,
-                });
-
-                return Some(Message::ReplyInconsistent(ReplyInconsistent {
-                    op_id,
-                    view_number: self.view.number,
-                    state: entry.state,
-                }));
+            Message::RequestUnlogged(RequestUnlogged { op }) => {
+                let mut sync = self.inner.sync.lock().unwrap();
+                if sync.state.is_normal() {
+                    let result = sync.upcalls.exec_unlogged(op);
+                    return Some(Message::ReplyUnlogged(super::ReplyUnlogged { result }));
+                }
             }
-            Message::ProposeConsensus(ProposeConsensus { op_id, op }) if self.state.is_normal() => {
-                let mut record = self.record.lock().unwrap();
+            Message::ProposeInconsistent(ProposeInconsistent { op_id, op }) => {
+                let mut sync = self.inner.sync.lock().unwrap();
+                let sync = &mut *sync;
+                if sync.state.is_normal() {
+                    let entry = sync.record.entries.entry(op_id).or_insert(RecordEntry {
+                        op,
+                        consistency: Consistency::Inconsistent,
+                        result: None,
+                        state: RecordEntryState::Tentative,
+                    });
 
-                let (result, state) = match record.entries.entry(op_id) {
-                    Entry::Occupied(entry) => {
-                        let entry = entry.get();
-                        (entry.result.clone(), entry.state)
-                    }
-                    Entry::Vacant(vacant) => {
-                        let mut upcalls = self.upcalls.lock().unwrap();
-                        let entry = vacant.insert(RecordEntry {
-                            result: Some(upcalls.exec_consensus(&op)),
-                            op,
-                            consistency: Consistency::Consistent,
-                            state: RecordEntryState::Tentative,
-                        });
-                        (entry.result.clone(), entry.state)
-                    }
-                };
-
-                if let Some(result) = result {
-                    return Some(Message::ReplyConsensus(ReplyConsensus {
+                    return Some(Message::ReplyInconsistent(ReplyInconsistent {
                         op_id,
-                        view_number: self.view.number,
-                        result,
-                        state,
+                        view_number: sync.view.number,
+                        state: entry.state,
                     }));
                 }
             }
-            Message::FinalizeInconsistent(FinalizeInconsistent { op_id })
-                if self.state.is_normal() =>
-            {
-                let mut record = self.record.lock().unwrap();
+            Message::ProposeConsensus(ProposeConsensus { op_id, op }) => {
+                let mut sync = self.inner.sync.lock().unwrap();
+                let sync = &mut *sync;
+                if sync.state.is_normal() {
+                    let (result, state) = match sync.record.entries.entry(op_id) {
+                        Entry::Occupied(entry) => {
+                            let entry = entry.get();
+                            (entry.result.clone(), entry.state)
+                        }
+                        Entry::Vacant(vacant) => {
+                            let entry = vacant.insert(RecordEntry {
+                                result: Some(sync.upcalls.exec_consensus(&op)),
+                                op,
+                                consistency: Consistency::Consistent,
+                                state: RecordEntryState::Tentative,
+                            });
+                            (entry.result.clone(), entry.state)
+                        }
+                    };
 
-                if let Some(entry) = record.entries.get_mut(&op_id) {
-                    entry.state = RecordEntryState::Finalized;
-                    let mut upcalls = self.upcalls.lock().unwrap();
-                    upcalls.exec_inconsistent(&entry.op);
-                    drop(record);
+                    if let Some(result) = result {
+                        return Some(Message::ReplyConsensus(ReplyConsensus {
+                            op_id,
+                            view_number: sync.view.number,
+                            result,
+                            state,
+                        }));
+                    }
                 }
             }
-            Message::FinalizeConsensus(FinalizeConsensus { op_id, result })
-                if self.state.is_normal() =>
-            {
-                let mut record = self.record.lock().unwrap();
-                if let Some(entry) = record.entries.get_mut(&op_id) {
-                    entry.state = RecordEntryState::Finalized;
-                    entry.result = Some(result);
-                    drop(record);
-                    return Some(Message::Confirm(Confirm {
-                        op_id,
-                        view_number: self.view.number,
-                    }));
+            Message::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
+                let mut sync = self.inner.sync.lock().unwrap();
+                let sync = &mut *sync;
+                if sync.state.is_normal() {
+                    if let Some(entry) = sync.record.entries.get_mut(&op_id) {
+                        entry.state = RecordEntryState::Finalized;
+                        sync.upcalls.exec_inconsistent(&entry.op);
+                    }
                 }
             }
-            Message::ReplyInconsistent(_) | Message::ReplyConsensus(_) | Message::Confirm(_) => {
-                println!("unexpected message")
+            Message::FinalizeConsensus(FinalizeConsensus { op_id, result }) => {
+                let mut sync = self.inner.sync.lock().unwrap();
+                if sync.state.is_normal() {
+                    if let Some(entry) = sync.record.entries.get_mut(&op_id) {
+                        entry.state = RecordEntryState::Finalized;
+                        entry.result = Some(result);
+                        return Some(Message::Confirm(Confirm {
+                            op_id,
+                            view_number: sync.view.number,
+                        }));
+                    }
+                }
+            }
+            Message::DoViewChange(DoViewChange {
+                record,
+                view_number,
+                latest_normal_view,
+            }) => {}
+            Message::StartView(StartView {
+                record: new_record,
+                view_number,
+            }) => {
+                let mut sync = self.inner.sync.lock().unwrap();
+                let sync = &mut *sync;
+                if view_number > sync.view.number
+                    || (view_number == sync.view.number || !sync.state.is_normal())
+                {
+                    sync.record = new_record;
+                    sync.upcalls.sync(&sync.record);
+                    sync.state = State::Normal;
+                    sync.view.number = view_number;
+                    sync.lastest_normal_view = view_number;
+                    // TODO: Persist view info.
+                }
             }
             _ => {
-                if self.state.is_normal() {
-                    println!("unexpected message");
-                }
+                println!("unexpected message");
             }
         }
         None
