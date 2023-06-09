@@ -7,6 +7,12 @@ pub(crate) enum State {
     Finalized,
 }
 
+impl State {
+    pub(crate) fn is_finalized(&self) -> bool {
+        matches!(self, Self::Finalized)
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum Consistency {
     Inconsistent,

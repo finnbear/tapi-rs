@@ -149,6 +149,13 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
         op: O,
         decide: impl Fn(Vec<R>) -> R,
     ) -> impl Future<Output = R> {
+        fn get_finalized<R>(replies: &HashMap<ReplicaIndex, ReplyConsensus<R>>) -> Option<&R> {
+            replies
+                .values()
+                .find(|r| r.state.is_finalized())
+                .map(|r| &r.result)
+        }
+
         fn get_quorum<R: PartialEq>(
             membership: MembershipSize,
             replies: &HashMap<ReplicaIndex, ReplyConsensus<R>>,
@@ -199,7 +206,8 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                     }),
                     move |results: &HashMap<ReplicaIndex, ReplyConsensus<R>>, timeout: bool| {
                         // TODO: Liveness
-                        get_quorum(membership_size, results, !timeout).is_some()
+                        get_finalized(&results).is_some()
+                            || get_quorum(membership_size, results, !timeout).is_some()
                     },
                     Some(Duration::from_secs(1)),
                 );
@@ -209,7 +217,8 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
 
                 let sync = inner.sync.lock().unwrap();
                 let membership_size = sync.membership.size();
-                if let Some((_, result)) = get_quorum(membership_size, &results, true) {
+                let finalized = get_finalized(&results);
+                if finalized.is_none() && let Some((_, result)) = get_quorum(membership_size, &results, true) {
                     // Fast path.
                     for (_, address) in &sync.membership {
                         inner.transport.do_send(
@@ -221,16 +230,19 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                         );
                     }
                     return result.clone();
-                } else if let Some((view_number, _)) = get_quorum(membership_size, &results, false)
-                {
+                } else if let Some(result) = finalized.cloned().or_else(|| {
+                    let view_number = get_quorum(membership_size, &results, false).map(|(v, _)| v);
+                    view_number.map(|view_number| {
+                        decide(
+                            results
+                                .into_values()
+                                .filter(|rc| rc.view_number == view_number)
+                                .map(|rc| rc.result)
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                }) {
                     // Slow path.
-                    let result = decide(
-                        results
-                            .into_values()
-                            .filter(|rc| rc.view_number == view_number)
-                            .map(|rc| rc.result)
-                            .collect::<Vec<_>>(),
-                    );
                     let future = join_until(
                         sync.membership.iter().map(|(index, address)| {
                             (
