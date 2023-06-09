@@ -7,7 +7,7 @@ use super::{
 use crate::{Transport, TransportMessage};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 
@@ -23,6 +23,10 @@ pub(crate) enum Status {
 impl Status {
     pub(crate) fn is_normal(&self) -> bool {
         matches!(self, Self::Normal)
+    }
+
+    pub(crate) fn is_view_changing(&self) -> bool {
+        matches!(self, Self::ViewChanging)
     }
 }
 
@@ -58,6 +62,7 @@ struct Sync<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
     view_change_timeout: Instant,
     upcalls: U,
     record: Record<U::Op, U::Result>,
+    outstanding_do_view_changes: HashMap<Index, DoViewChange<U::Op, U::Result>>,
 }
 
 impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T> {
@@ -78,6 +83,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                     view_change_timeout: Instant::now() + Self::VIEW_CHANGE_INTERVAL,
                     upcalls,
                     record: Record::default(),
+                    outstanding_do_view_changes: HashMap::new(),
                 }),
             }),
         };
@@ -91,32 +97,35 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
             loop {
                 tokio::time::sleep(Duration::from_millis(100)).await;
 
-                let now = Instant::now();
                 let mut sync = inner.sync.lock().unwrap();
-                if now >= sync.view_change_timeout {
+                if Instant::now() >= sync.view_change_timeout {
                     if sync.status.is_normal() {
                         sync.status = Status::ViewChanging;
                     }
                     sync.view.number.0 += 1;
-                    sync.view_change_timeout = now + Self::VIEW_CHANGE_INTERVAL;
 
-                    for (index, address) in &sync.view.membership {
-                        if index == my_index {
-                            continue;
-                        }
-                        inner.transport.do_send(
-                            address,
-                            Message::DoViewChange(DoViewChange {
-                                record: (index == sync.view.leader_index())
-                                    .then(|| sync.record.clone()),
-                                view_number: sync.view.number,
-                                latest_normal_view: sync.lastest_normal_view,
-                            }),
-                        )
-                    }
+                    Self::broadcast_do_view_change(my_index, &inner.transport, &mut *sync);
                 }
             }
         });
+    }
+
+    fn broadcast_do_view_change(my_index: Index, transport: &T, sync: &mut Sync<U, T>) {
+        sync.view_change_timeout = Instant::now() + Self::VIEW_CHANGE_INTERVAL;
+        for (index, address) in &sync.view.membership {
+            if index == my_index {
+                continue;
+            }
+            transport.do_send(
+                address,
+                Message::DoViewChange(DoViewChange {
+                    replica_index: my_index,
+                    record: (index == sync.view.leader_index()).then(|| sync.record.clone()),
+                    view_number: sync.view.number,
+                    latest_normal_view: sync.lastest_normal_view,
+                }),
+            )
+        }
     }
 
     pub(crate) fn receive(
@@ -203,11 +212,67 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                     }
                 }
             }
-            Message::DoViewChange(DoViewChange {
-                record,
-                view_number,
-                latest_normal_view,
-            }) => {}
+            Message::DoViewChange(msg) => {
+                let mut sync = self.inner.sync.lock().unwrap();
+                if msg.view_number > sync.view.number
+                    || (msg.view_number == sync.view.number && sync.status.is_view_changing())
+                {
+                    if msg.view_number > sync.view.number {
+                        sync.view.number = msg.view_number;
+                        if sync.status.is_normal() {
+                            sync.status = Status::ViewChanging;
+                        }
+                        // TODO: Persist
+                        Self::broadcast_do_view_change(
+                            self.index,
+                            &self.inner.transport,
+                            &mut *sync,
+                        );
+                    }
+
+                    if self.index == sync.view.leader_index() {
+                        let msg_view_number = msg.view_number;
+                        match sync.outstanding_do_view_changes.entry(msg.replica_index) {
+                            Entry::Vacant(vacant) => {
+                                vacant.insert(msg);
+                            }
+                            Entry::Occupied(mut occupied) => {
+                                if msg.view_number < occupied.get().view_number {
+                                    return None;
+                                }
+                                occupied.insert(msg);
+                            }
+                        }
+
+                        let threshold = sync.view.membership.size().f();
+                        for do_view_change in sync.outstanding_do_view_changes.values() {
+                            let matching = sync
+                                .outstanding_do_view_changes
+                                .values()
+                                .filter(|other| other.view_number == do_view_change.view_number)
+                                .count();
+                            if matching >= threshold {
+                                println!("DOING VIEW CHANGE");
+                                // TODO: IR Merge
+                                sync.status = Status::Normal;
+                                sync.view.number = msg_view_number;
+                                sync.lastest_normal_view = msg_view_number;
+                                // TODO: Persist
+                                for (_, address) in &sync.view.membership {
+                                    self.inner.transport.do_send(
+                                        address,
+                                        Message::StartView(StartView {
+                                            record: sync.record.clone(),
+                                            view_number: sync.view.number,
+                                        }),
+                                    );
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
             Message::StartView(StartView {
                 record: new_record,
                 view_number,

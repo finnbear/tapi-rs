@@ -1,4 +1,4 @@
-use super::{OpId, Record, RecordEntryState, ViewNumber};
+use super::{OpId, Record, RecordEntryState, ReplicaIndex, ViewNumber};
 
 #[derive(Debug, Clone, derive_more::From, derive_more::TryInto)]
 pub(crate) enum Message<O, R> {
@@ -71,6 +71,7 @@ pub(crate) struct Confirm {
 
 #[derive(Debug, Clone)]
 pub(crate) struct DoViewChange<O, R> {
+    pub(crate) replica_index: ReplicaIndex,
     pub(crate) record: Option<Record<O, R>>,
     pub(crate) view_number: ViewNumber,
     pub(crate) latest_normal_view: ViewNumber,

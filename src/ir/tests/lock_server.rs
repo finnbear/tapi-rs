@@ -5,6 +5,7 @@ use crate::{
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 #[tokio::test]
@@ -144,4 +145,6 @@ async fn lock_server() {
             .await,
         Res::Ok
     );
+
+    tokio::time::sleep(Duration::from_secs(10)).await;
 }
