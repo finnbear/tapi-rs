@@ -13,6 +13,7 @@ pub(crate) enum Consistency {
     Consistent,
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct Entry<O, R> {
     pub(crate) op: O,
     pub(crate) consistency: Consistency,
@@ -20,6 +21,7 @@ pub(crate) struct Entry<O, R> {
     pub(crate) state: State,
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct Record<O, R> {
     pub(crate) entries: HashMap<OpId, Entry<O, R>>,
 }
