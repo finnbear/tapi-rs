@@ -242,6 +242,17 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                         )
                     })
                 }) {
+                    fn has_quorum(membership: MembershipSize, results: &HashMap<ReplicaIndex, Confirm>) -> bool {
+                        let threshold = membership.f_plus_one();
+                        for result in results.values() {
+                            let matching = results.values().filter(|other| other.view_number == result.view_number).count();
+                            if matching >= threshold {
+                                return true;
+                            }
+                        }
+                        false
+                    }
+
                     // Slow path.
                     let future = join_until(
                         sync.membership.iter().map(|(index, address)| {
@@ -256,12 +267,16 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                                 ),
                             )
                         }),
-                        membership_size.f_plus_one(),
-                        None,
+                        |results: &HashMap<ReplicaIndex, Confirm>, timeout: bool| {
+                            has_quorum(membership_size, results) || (timeout && results.len() >= membership_size.f_plus_one())
+                        },
+                        Some(Duration::from_secs(1)),
                     );
                     drop(sync);
-                    future.await;
-                    return result;
+                    let results = future.await;
+                    if has_quorum(membership_size, &results) {
+                        return result;
+                    }
                 }
             }
         }
