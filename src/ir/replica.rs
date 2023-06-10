@@ -254,11 +254,28 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                             let matching = sync
                                 .outstanding_do_view_changes
                                 .values()
-                                .filter(|other| other.view_number == do_view_change.view_number)
-                                .count();
-                            if matching >= threshold {
+                                .filter(|other| other.view_number == do_view_change.view_number);
+
+                            if matching.clone().count() >= threshold {
                                 println!("DOING VIEW CHANGE");
-                                // TODO: IR Merge
+                                {
+                                    let latest_normal_view = sync.lastest_normal_view.max(
+                                        matching
+                                            .clone()
+                                            .map(|r| r.latest_normal_view)
+                                            .max()
+                                            .unwrap(),
+                                    );
+                                    let mut latest_records = matching
+                                        .clone()
+                                        .filter(|r| r.latest_normal_view == latest_normal_view)
+                                        .map(|r| r.record.as_ref().unwrap().clone())
+                                        .collect::<Vec<_>>();
+                                    if sync.lastest_normal_view == latest_normal_view {
+                                        latest_records.push(sync.record.clone());
+                                    }
+                                    println!("have {} latest", latest_records.len());
+                                }
                                 sync.view_change_timeout =
                                     Instant::now() + Self::VIEW_CHANGE_INTERVAL;
                                 sync.status = Status::Normal;
