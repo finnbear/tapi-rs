@@ -81,4 +81,8 @@ impl Size {
     pub(crate) fn three_over_two_f_plus_one(&self) -> usize {
         (self.f() * 3).div_ceil(2) + 1
     }
+
+    pub(crate) fn f_over_two_plus_one(&self) -> usize {
+        self.f().div_ceil(2) + 1
+    }
 }

@@ -1,6 +1,6 @@
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrMembership, IrMessage, IrOpId, IrRecord,
-    IrReplica, IrReplicaIndex, IrReplicaUpcalls, Transport,
+    IrRecordEntry, IrReplica, IrReplicaIndex, IrReplicaUpcalls, Transport,
 };
 use std::{
     collections::HashMap,
@@ -59,8 +59,9 @@ async fn lock_server() {
         fn sync(&mut self, record: &IrRecord<Self::Op, Self::Result>) {}
         fn merge(
             &mut self,
-            d: HashMap<IrOpId, Self::Op>,
-            u: HashMap<IrOpId, Self::Op>,
+            d: HashMap<IrOpId, Vec<IrRecordEntry<Self::Op, Self::Result>>>,
+            u: HashMap<IrOpId, Vec<IrRecordEntry<Self::Op, Self::Result>>>,
+            majority_results_in_d: HashMap<IrOpId, Self::Result>,
         ) -> IrRecord<Self::Op, Self::Result> {
             Default::default()
         }

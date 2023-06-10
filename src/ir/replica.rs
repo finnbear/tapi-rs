@@ -32,7 +32,7 @@ impl Status {
 
 pub(crate) trait Upcalls: Send + 'static {
     type Op: TransportMessage;
-    type Result: TransportMessage;
+    type Result: TransportMessage + PartialEq;
 
     fn exec_unlogged(&mut self, op: Self::Op) -> Self::Result;
     fn exec_inconsistent(&mut self, op: &Self::Op);
@@ -40,8 +40,9 @@ pub(crate) trait Upcalls: Send + 'static {
     fn sync(&mut self, record: &Record<Self::Op, Self::Result>);
     fn merge(
         &mut self,
-        d: HashMap<OpId, Self::Op>,
-        u: HashMap<OpId, Self::Op>,
+        d: HashMap<OpId, Vec<RecordEntry<Self::Op, Self::Result>>>,
+        u: HashMap<OpId, Vec<RecordEntry<Self::Op, Self::Result>>>,
+        majority_results_in_d: HashMap<OpId, Self::Result>,
     ) -> Record<Self::Op, Self::Result>;
 }
 
@@ -300,6 +301,45 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                             }
                                         }
                                     }
+
+                                    // build d and u
+                                    let mut d =
+                                        HashMap::<OpId, Vec<RecordEntry<U::Op, U::Result>>>::new();
+                                    let mut u =
+                                        HashMap::<OpId, Vec<RecordEntry<U::Op, U::Result>>>::new();
+                                    let mut majority_results_in_d =
+                                        HashMap::<OpId, U::Result>::new();
+
+                                    for (op_id, entries) in entries_by_opid.clone() {
+                                        let mut majority_result_in_d = None;
+
+                                        for entry in &entries {
+                                            let matches = entries
+                                                .iter()
+                                                .filter(|other| other.result == entry.result)
+                                                .count();
+
+                                            if matches
+                                                >= sync.view.membership.size().f_over_two_plus_one()
+                                            {
+                                                majority_result_in_d =
+                                                    Some(entry.result.as_ref().unwrap().clone());
+                                                break;
+                                            }
+                                        }
+
+                                        if let Some(majority_result_in_d) = majority_result_in_d {
+                                            d.insert(op_id, entries);
+                                            majority_results_in_d
+                                                .insert(op_id, majority_result_in_d);
+                                        } else {
+                                            u.insert(op_id, entries);
+                                        }
+                                    }
+
+                                    sync.upcalls.sync(&R);
+                                    let results_by_opid =
+                                        sync.upcalls.merge(d, u, majority_results_in_d);
                                 }
                                 sync.view_change_timeout =
                                     Instant::now() + Self::VIEW_CHANGE_INTERVAL;
