@@ -7,6 +7,7 @@ use super::{
 use crate::{Transport, TransportMessage};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
+    fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
@@ -14,6 +15,7 @@ use std::{
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) struct Index(pub usize);
 
+#[derive(Debug)]
 pub(crate) enum Status {
     Normal,
     ViewChanging,
@@ -49,6 +51,18 @@ pub(crate) trait Upcalls: Send + 'static {
 pub(crate) struct Replica<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
     index: Index,
     inner: Arc<Inner<U, T>>,
+}
+
+impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Debug for Replica<U, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("Replica");
+        if let Ok(sync) = self.inner.sync.try_lock() {
+            s.field("status", &sync.status);
+            s.field("view", &sync.view.number);
+            s.field("last_normal_view", &sync.lastest_normal_view);
+        }
+        s.finish_non_exhaustive()
+    }
 }
 
 struct Inner<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
@@ -355,6 +369,8 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                             },
                                         );
                                     }
+
+                                    sync.record = R;
                                 }
                                 sync.view_change_timeout =
                                     Instant::now() + Self::VIEW_CHANGE_INTERVAL;
@@ -386,6 +402,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                 if view_number > sync.view.number
                     || (view_number == sync.view.number || !sync.status.is_normal())
                 {
+                    println!("{:?} starting view {view_number:?}", self.index);
                     sync.record = new_record;
                     sync.upcalls.sync(&sync.record);
                     sync.status = Status::Normal;

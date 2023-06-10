@@ -61,7 +61,7 @@ impl<M> Clone for Channel<M> {
 impl<M> Channel<M> {
     fn should_drop(_from: usize, _to: usize) -> bool {
         use rand::Rng;
-        rand::thread_rng().gen_bool(0.3)
+        rand::thread_rng().gen_bool(0.1)
     }
 }
 

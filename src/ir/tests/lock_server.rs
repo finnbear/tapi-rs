@@ -128,10 +128,13 @@ async fn lock_server() {
         Res::No
     );
     client.invoke_inconsistent(Op::Unlock).await;
+
+    tokio::time::sleep(Duration::from_secs(6)).await;
+
+    println!("invoke {replicas:?}");
     assert_eq!(
         client.invoke_consensus(Op::Lock, &decide_lock).await,
         Res::Ok
     );
-
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    println!("done");
 }
