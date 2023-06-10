@@ -43,7 +43,7 @@ pub(crate) trait Upcalls: Send + 'static {
         d: HashMap<OpId, Vec<RecordEntry<Self::Op, Self::Result>>>,
         u: HashMap<OpId, Vec<RecordEntry<Self::Op, Self::Result>>>,
         majority_results_in_d: HashMap<OpId, Self::Result>,
-    ) -> Record<Self::Op, Self::Result>;
+    ) -> HashMap<OpId, Self::Result>;
 }
 
 pub(crate) struct Replica<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
@@ -340,6 +340,21 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     sync.upcalls.sync(&R);
                                     let results_by_opid =
                                         sync.upcalls.merge(d, u, majority_results_in_d);
+
+                                    //let mut merged = Record::default();
+                                    for (op_id, result) in results_by_opid {
+                                        let mut entries = entries_by_opid.get(&op_id).unwrap();
+                                        let entry = &entries[0];
+                                        R.entries.insert(
+                                            op_id,
+                                            RecordEntry {
+                                                op: entry.op.clone(),
+                                                consistency: entry.consistency,
+                                                result: Some(result.clone()),
+                                                state: RecordEntryState::Finalized,
+                                            },
+                                        );
+                                    }
                                 }
                                 sync.view_change_timeout =
                                     Instant::now() + Self::VIEW_CHANGE_INTERVAL;

@@ -62,7 +62,7 @@ async fn lock_server() {
             d: HashMap<IrOpId, Vec<IrRecordEntry<Self::Op, Self::Result>>>,
             u: HashMap<IrOpId, Vec<IrRecordEntry<Self::Op, Self::Result>>>,
             majority_results_in_d: HashMap<IrOpId, Self::Result>,
-        ) -> IrRecord<Self::Op, Self::Result> {
+        ) -> HashMap<IrOpId, Self::Result> {
             Default::default()
         }
     }
