@@ -83,6 +83,7 @@ impl<M: Message> super::Transport for Channel<M> {
         let callback = inner.callbacks.get(address).map(Arc::clone);
         drop(inner);
         let from = self.address;
+        //println!("sending {message:?} from {from} to {address}");
         async move {
             tokio::time::sleep(std::time::Duration::from_millis(
                 thread_rng().gen_range(1..5),
@@ -116,9 +117,14 @@ impl<M: Message> super::Transport for Channel<M> {
         let inner = self.inner.read().unwrap();
         let callback = inner.callbacks.get(address).map(Arc::clone);
         drop(inner);
+        let from = self.address;
+        let message = message.into();
+        //println!("do-sending {message:?} from {from} to {address}");
         if let Some(callback) = callback {
             if !Self::should_drop(self.address, address) {
-                callback(self.address, message.into());
+                std::thread::spawn(move || {
+                    callback(from, message);
+                });
             }
         }
     }

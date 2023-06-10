@@ -76,15 +76,14 @@ async fn lock_server() {
         index: IrReplicaIndex,
         registry: &ChannelRegistry<Message>,
         membership: &IrMembership<ChannelTransport<Message>>,
-    ) -> Arc<Mutex<IrReplica<Upcalls, ChannelTransport<Message>>>> {
+    ) -> Arc<IrReplica<Upcalls, ChannelTransport<Message>>> {
         Arc::new_cyclic(
-            |weak: &std::sync::Weak<Mutex<IrReplica<Upcalls, ChannelTransport<Message>>>>| {
+            |weak: &std::sync::Weak<IrReplica<Upcalls, ChannelTransport<Message>>>| {
                 let weak = weak.clone();
-                let channel = registry.channel(move |from, message| {
-                    weak.upgrade()?.lock().unwrap().receive(from, message)
-                });
+                let channel =
+                    registry.channel(move |from, message| weak.upgrade()?.receive(from, message));
                 let upcalls = Upcalls { locked: false };
-                Mutex::new(IrReplica::new(index, membership.clone(), upcalls, channel))
+                IrReplica::new(index, membership.clone(), upcalls, channel)
             },
         )
     }
@@ -96,14 +95,13 @@ async fn lock_server() {
     fn create_client(
         registry: &ChannelRegistry<Message>,
         membership: &IrMembership<ChannelTransport<Message>>,
-    ) -> Arc<Mutex<IrClient<ChannelTransport<Message>, Op, Res>>> {
+    ) -> Arc<IrClient<ChannelTransport<Message>, Op, Res>> {
         Arc::new_cyclic(
-            |weak: &std::sync::Weak<Mutex<IrClient<ChannelTransport<Message>, Op, Res>>>| {
+            |weak: &std::sync::Weak<IrClient<ChannelTransport<Message>, Op, Res>>| {
                 let weak = weak.clone();
-                let channel = registry.channel(move |from, message| {
-                    weak.upgrade()?.lock().unwrap().receive(from, message)
-                });
-                Mutex::new(IrClient::new(membership.clone(), channel))
+                let channel =
+                    registry.channel(move |from, message| weak.upgrade()?.receive(from, message));
+                IrClient::new(membership.clone(), channel)
             },
         )
     }
@@ -121,28 +119,16 @@ async fn lock_server() {
     };
 
     assert_eq!(
-        client
-            .lock()
-            .unwrap()
-            .invoke_consensus(Op::Lock, &decide_lock)
-            .await,
+        client.invoke_consensus(Op::Lock, &decide_lock).await,
         Res::Ok
     );
     assert_eq!(
-        client
-            .lock()
-            .unwrap()
-            .invoke_consensus(Op::Lock, &decide_lock)
-            .await,
+        client.invoke_consensus(Op::Lock, &decide_lock).await,
         Res::No
     );
-    client.lock().unwrap().invoke_inconsistent(Op::Unlock).await;
+    client.invoke_inconsistent(Op::Unlock).await;
     assert_eq!(
-        client
-            .lock()
-            .unwrap()
-            .invoke_consensus(Op::Lock, &decide_lock)
-            .await,
+        client.invoke_consensus(Op::Lock, &decide_lock).await,
         Res::Ok
     );
 

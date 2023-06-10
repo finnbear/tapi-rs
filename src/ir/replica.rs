@@ -66,7 +66,7 @@ struct Sync<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
 }
 
 impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T> {
-    const VIEW_CHANGE_INTERVAL: Duration = Duration::from_millis(500);
+    const VIEW_CHANGE_INTERVAL: Duration = Duration::from_secs(2);
 
     pub(crate) fn new(index: Index, membership: Membership<T>, upcalls: U, transport: T) -> Self {
         let ret = Self {
@@ -103,6 +103,11 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                         sync.status = Status::ViewChanging;
                     }
                     sync.view.number.0 += 1;
+
+                    println!(
+                        "{my_index:?} timeout sending do view change {}",
+                        sync.view.number.0
+                    );
 
                     Self::broadcast_do_view_change(my_index, &inner.transport, &mut *sync);
                 }
@@ -254,6 +259,8 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                             if matching >= threshold {
                                 println!("DOING VIEW CHANGE");
                                 // TODO: IR Merge
+                                sync.view_change_timeout =
+                                    Instant::now() + Self::VIEW_CHANGE_INTERVAL;
                                 sync.status = Status::Normal;
                                 sync.view.number = msg_view_number;
                                 sync.lastest_normal_view = msg_view_number;

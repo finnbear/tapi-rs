@@ -283,7 +283,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
     }
 
     pub(crate) fn receive(
-        &mut self,
+        &self,
         sender: T::Address,
         message: Message<O, R>,
     ) -> Option<Message<O, R>> {

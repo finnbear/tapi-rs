@@ -1,3 +1,5 @@
-pub(crate) trait Message: Clone + Send + 'static {}
+use std::fmt::Debug;
 
-impl<T: Clone + Send + 'static> Message for T {}
+pub(crate) trait Message: Clone + Send + Debug + 'static {}
+
+impl<T: Clone + Send + Debug + 'static> Message for T {}
