@@ -177,7 +177,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                             let entry = vacant.insert(RecordEntry {
                                 result: Some(sync.upcalls.exec_consensus(&op)),
                                 op,
-                                consistency: Consistency::Consistent,
+                                consistency: Consistency::Consensus,
                                 state: RecordEntryState::Tentative,
                             });
                             (entry.result.clone(), entry.state)
@@ -275,6 +275,31 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                         latest_records.push(sync.record.clone());
                                     }
                                     println!("have {} latest", latest_records.len());
+
+                                    #[allow(non_snake_case)]
+                                    let mut R = Record::default();
+                                    let mut entries_by_opid =
+                                        HashMap::<OpId, Vec<RecordEntry<U::Op, U::Result>>>::new();
+                                    for r in latest_records {
+                                        for (op_id, entry) in r.entries.clone() {
+                                            if entry.consistency.is_inconsistent() {
+                                                R.entries.entry(op_id).or_insert(entry);
+                                            } else if entry.state.is_finalized() {
+                                                R.entries.entry(op_id).or_insert(entry);
+                                                entries_by_opid.remove(&op_id);
+                                            } else {
+                                                assert!(entry.consistency.is_consensus());
+                                                assert!(entry.state.is_tentative());
+
+                                                if !R.entries.contains_key(&op_id) {
+                                                    entries_by_opid
+                                                        .entry(op_id)
+                                                        .or_default()
+                                                        .push(entry);
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 sync.view_change_timeout =
                                     Instant::now() + Self::VIEW_CHANGE_INTERVAL;

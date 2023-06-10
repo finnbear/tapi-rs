@@ -3,11 +3,15 @@ use std::collections::HashMap;
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum State {
-    Tentative,
     Finalized,
+    Tentative,
 }
 
 impl State {
+    pub(crate) fn is_tentative(&self) -> bool {
+        matches!(self, Self::Tentative)
+    }
+
     pub(crate) fn is_finalized(&self) -> bool {
         matches!(self, Self::Finalized)
     }
@@ -16,7 +20,17 @@ impl State {
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum Consistency {
     Inconsistent,
-    Consistent,
+    Consensus,
+}
+
+impl Consistency {
+    pub(crate) fn is_inconsistent(&self) -> bool {
+        matches!(self, Self::Inconsistent)
+    }
+
+    pub(crate) fn is_consensus(&self) -> bool {
+        matches!(self, Self::Consensus)
+    }
 }
 
 #[derive(Debug, Clone)]
