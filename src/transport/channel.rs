@@ -1,10 +1,13 @@
 use rand::{thread_rng, Rng};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use super::{Error, Message, Transport};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::future::Future;
 use std::ops::Range;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 pub(crate) struct Registry<M> {
@@ -42,6 +45,7 @@ impl<M> Registry<M> {
         inner.callbacks.push(Arc::new(callback));
         Channel {
             address,
+            persistent: Default::default(),
             inner: Arc::clone(&self.inner),
         }
     }
@@ -49,6 +53,7 @@ impl<M> Registry<M> {
 
 pub(crate) struct Channel<M> {
     address: usize,
+    persistent: Arc<Mutex<HashMap<String, String>>>,
     inner: Arc<RwLock<Inner<M>>>,
 }
 
@@ -56,6 +61,7 @@ impl<M> Clone for Channel<M> {
     fn clone(&self) -> Self {
         Self {
             address: self.address,
+            persistent: Arc::clone(&self.persistent),
             inner: Arc::clone(&self.inner),
         }
     }
@@ -87,6 +93,26 @@ impl<M: Message> Transport for Channel<M> {
 
     fn sleep(duration: Duration) -> Self::Sleep {
         tokio::time::sleep(duration / 5)
+    }
+
+    fn persist<T: Serialize>(&self, key: &str, value: Option<&T>) {
+        let mut persistent = self.persistent.lock().unwrap();
+        if let Some(value) = value {
+            let string = serde_json::to_string(&value).unwrap();
+            println!("{} persisting {key} = {string}", self.address);
+            persistent.insert(key.to_owned(), string);
+        } else {
+            persistent.remove(key);
+            unreachable!();
+        }
+    }
+
+    fn persisted<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
+        self.persistent
+            .lock()
+            .unwrap()
+            .get(key)
+            .and_then(|value| serde_json::from_str(value).ok())
     }
 
     fn send<R: TryFrom<M>>(

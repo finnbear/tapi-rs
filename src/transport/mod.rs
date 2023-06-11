@@ -5,6 +5,7 @@ mod message;
 pub(crate) use channel::{Channel, Registry as ChannelRegistry};
 pub(crate) use error::Error;
 pub(crate) use message::Message;
+use serde::{de::DeserializeOwned, Serialize};
 use std::{fmt::Debug, future::Future, time::Duration};
 
 pub(crate) trait Transport: Clone + Send + Sync + 'static {
@@ -16,6 +17,12 @@ pub(crate) trait Transport: Clone + Send + Sync + 'static {
     fn address(&self) -> Self::Address;
 
     fn sleep(duration: Duration) -> Self::Sleep;
+
+    /// Synchronously persist a key-value pair.
+    fn persist<T: Serialize>(&self, key: &str, value: Option<&T>);
+
+    /// Synchronously load a persisted key-value pair.
+    fn persisted<T: DeserializeOwned>(&self, key: &str) -> Option<T>;
 
     /// Send/retry, ignoring any errors, until there is a reply.
     fn send<R: TryFrom<Self::Message>>(

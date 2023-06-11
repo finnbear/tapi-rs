@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 use super::{Membership, ReplicaIndex};
 use crate::transport::Transport;
 use std::fmt::Debug;
 
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub(crate) struct Number(pub(crate) u64);
 
 impl Debug for Number {

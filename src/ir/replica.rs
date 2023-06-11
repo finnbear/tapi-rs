@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use super::{
     message::ViewChangeAddendum, record::Consistency, Confirm, DoViewChange, FinalizeConsensus,
     FinalizeInconsistent, Membership, Message, OpId, ProposeConsensus, ProposeInconsistent, Record,
@@ -65,7 +67,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Debug for Re
         if let Ok(sync) = self.inner.sync.try_lock() {
             s.field("status", &sync.status);
             s.field("view", &sync.view.number);
-            s.field("last_normal_view", &sync.lastest_normal_view);
+            s.field("last_normal_view", &sync.latest_normal_view);
         }
         s.finish_non_exhaustive()
     }
@@ -79,11 +81,17 @@ struct Inner<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
 struct Sync<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
     status: Status,
     view: View<T>,
-    lastest_normal_view: ViewNumber,
+    latest_normal_view: ViewNumber,
     changed_view_recently: bool,
     upcalls: U,
     record: Record<U::Op, U::Result>,
     outstanding_do_view_changes: HashMap<Index, DoViewChange<U::Op, U::Result>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistentViewInfo {
+    view: ViewNumber,
+    latest_normal_view: ViewNumber,
 }
 
 impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T> {
@@ -100,7 +108,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                         membership,
                         number: ViewNumber(0),
                     },
-                    lastest_normal_view: ViewNumber(0),
+                    latest_normal_view: ViewNumber(0),
                     changed_view_recently: true,
                     upcalls,
                     record: Record::default(),
@@ -108,9 +116,50 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                 }),
             }),
         };
+        let mut sync = ret.inner.sync.lock().unwrap();
+
+        if let Some(persistent) = ret
+            .inner
+            .transport
+            .persisted::<PersistentViewInfo>(&ret.view_info_key())
+        {
+            sync.status = Status::Recovering;
+            sync.view.number = persistent.view;
+            sync.latest_normal_view = persistent.latest_normal_view;
+            sync.view.number.0 += 1;
+
+            if sync.view.leader_index() == ret.index {
+                sync.view.number.0 += 1;
+            }
+
+            ret.persist_view_info(&*sync);
+
+            Self::broadcast_do_view_change(ret.index, &ret.inner.transport, &mut *sync);
+        } else {
+            ret.persist_view_info(&*sync);
+        }
+        drop(sync);
         ret.tick();
         ret
     }
+
+    fn view_info_key(&self) -> String {
+        format!("ir_replica_{}", self.index.0)
+    }
+
+    fn persist_view_info(&self, sync: &Sync<U, T>) {
+        if sync.view.membership.len() == 1 {
+            return;
+        }
+        self.inner.transport.persist(
+            &self.view_info_key(),
+            Some(&PersistentViewInfo {
+                view: sync.view.number,
+                latest_normal_view: sync.latest_normal_view,
+            }),
+        );
+    }
+
     fn tick(&self) {
         let my_index = self.index;
         let inner = Arc::clone(&self.inner);
@@ -151,7 +200,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                     addendum: (index == sync.view.leader_index()).then(|| ViewChangeAddendum {
                         record: sync.record.clone(),
                         replica_index: my_index,
-                        latest_normal_view: sync.lastest_normal_view,
+                        latest_normal_view: sync.latest_normal_view,
                     }),
                 }),
             )
@@ -256,7 +305,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                         if sync.status.is_normal() {
                             sync.status = Status::ViewChanging;
                         }
-                        // TODO: Persist
+                        self.persist_view_info(&*sync);
                         Self::broadcast_do_view_change(
                             self.index,
                             &self.inner.transport,
@@ -288,7 +337,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                             if matching.clone().count() >= threshold {
                                 println!("DOING VIEW CHANGE");
                                 {
-                                    let latest_normal_view = sync.lastest_normal_view.max(
+                                    let latest_normal_view = sync.latest_normal_view.max(
                                         matching
                                             .clone()
                                             .map(|r| {
@@ -305,7 +354,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                         })
                                         .map(|r| r.addendum.as_ref().unwrap().record.clone())
                                         .collect::<Vec<_>>();
-                                    if sync.lastest_normal_view == latest_normal_view {
+                                    if sync.latest_normal_view == latest_normal_view {
                                         latest_records.push(sync.record.clone());
                                     }
                                     println!("have {} latest", latest_records.len());
@@ -394,8 +443,8 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                 sync.changed_view_recently = true;
                                 sync.status = Status::Normal;
                                 sync.view.number = msg_view_number;
-                                sync.lastest_normal_view = msg_view_number;
-                                // TODO: Persist
+                                sync.latest_normal_view = msg_view_number;
+                                self.persist_view_info(&*sync);
                                 for (_, address) in &sync.view.membership {
                                     self.inner.transport.do_send(
                                         address,
@@ -425,8 +474,8 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                     sync.upcalls.sync(&sync.record);
                     sync.status = Status::Normal;
                     sync.view.number = view_number;
-                    sync.lastest_normal_view = view_number;
-                    // TODO: Persist view info.
+                    sync.latest_normal_view = view_number;
+                    self.persist_view_info(&*sync);
                 }
             }
             _ => {
