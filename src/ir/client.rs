@@ -74,6 +74,26 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
         self.id
     }
 
+    fn notify_old_views(
+        transport: &T,
+        sync: &SyncInner<T>,
+        views: impl IntoIterator<Item = (ReplicaIndex, ViewNumber)> + Clone,
+    ) {
+        if let Some(latest_view) = views.clone().into_iter().map(|(_, n)| n).max() {
+            for (index, view_number) in views {
+                if view_number < latest_view {
+                    transport.do_send(
+                        sync.membership.get(index).unwrap(),
+                        Message::DoViewChange(DoViewChange {
+                            view_number: latest_view,
+                            addendum: None,
+                        }),
+                    )
+                }
+            }
+        }
+    }
+
     pub(crate) fn invoke_inconsistent(&self, op: O) -> impl Future<Output = Result<(), Error>> {
         let client_id = self.id;
         let inner = Arc::clone(&self.inner);
@@ -133,27 +153,18 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                 drop(sync);
 
                 let results = future.await;
+
+                let sync = inner.sync.lock().unwrap();
+                Self::notify_old_views(
+                    &inner.transport,
+                    &*sync,
+                    results.iter().map(|(i, r)| (*i, r.view_number)),
+                );
+
                 if !has_quorum(membership_size, &results, true) {
-                    if let Some(latest_view) =
-                        results.values().map(|result| result.view_number).max()
-                    {
-                        let sync = inner.sync.lock().unwrap();
-                        for (index, result) in &results {
-                            if result.view_number < latest_view {
-                                inner.transport.do_send(
-                                    sync.membership.get(*index).unwrap(),
-                                    Message::DoViewChange(DoViewChange {
-                                        view_number: latest_view,
-                                        addendum: None,
-                                    }),
-                                )
-                            }
-                        }
-                    }
                     continue;
                 }
 
-                let sync = inner.sync.lock().unwrap();
                 for (_, address) in &sync.membership {
                     inner
                         .transport
@@ -235,8 +246,14 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                 drop(sync);
 
                 let results = future.await;
-
                 let sync = inner.sync.lock().unwrap();
+
+                Self::notify_old_views(
+                    &inner.transport,
+                    &*sync,
+                    results.iter().map(|(i, r)| (*i, r.view_number)),
+                );
+
                 let membership_size = sync.membership.size();
                 let finalized = get_finalized(&results);
                 println!("checking quorum: {}", finalized.is_some());
@@ -296,6 +313,12 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                     );
                     drop(sync);
                     let results = future.await;
+                    let mut sync = inner.sync.lock().unwrap();
+                    Self::notify_old_views(
+                        &inner.transport,
+                        &*sync,
+                        results.iter().map(|(i, r)| (*i, r.view_number)),
+                    );
                     if has_quorum(membership_size, &results) {
                         return result;
                     }
