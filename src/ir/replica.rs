@@ -12,8 +12,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) struct Index(pub usize);
+
+impl Debug for Index {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "R({})", self.0)
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum Status {

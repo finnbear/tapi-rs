@@ -21,11 +21,16 @@ use std::{
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) struct Id(u64);
+pub(crate) struct Id(pub(crate) u64);
 
 impl Id {
     fn new() -> Self {
-        Self(thread_rng().gen())
+        let mut rng = thread_rng();
+        Self(if cfg!(debug_assertions) {
+            rng.gen_range(0..100000)
+        } else {
+            rng.gen()
+        })
     }
 }
 
@@ -53,7 +58,7 @@ impl<T: Transport> SyncInner<T> {
     }
 }
 
-impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Debug>
+impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + PartialEq + Debug>
     Client<T, O, R>
 {
     pub(crate) fn new(membership: Membership<T>, transport: T) -> Self {

@@ -1,6 +1,7 @@
 use rand::{thread_rng, Rng};
 
 use super::{Error, Message, Transport};
+use std::fmt::Debug;
 use std::future::Future;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
@@ -65,7 +66,7 @@ impl<M: Message> Channel<M> {
         //from == 0 || to == 0
 
         use rand::Rng;
-        rand::thread_rng().gen_bool(0.4)
+        rand::thread_rng().gen_bool(1.0 / 3.0)
     }
 
     fn random_delay(range: Range<u64>) -> <Self as Transport>::Sleep {
@@ -91,17 +92,18 @@ impl<M: Message> Transport for Channel<M> {
     fn send<R: TryFrom<M>>(
         &self,
         address: Self::Address,
-        message: impl Into<Self::Message>,
+        message: impl Into<Self::Message> + Debug,
     ) -> impl Future<Output = R> + 'static {
-        let message = message.into();
-        let inner = self.inner.read().unwrap();
-        let callback = inner.callbacks.get(address).map(Arc::clone);
-        drop(inner);
-        let from = self.address;
+        let from: usize = self.address;
         println!("{from} sending {message:?} to {address}");
+        let message = message.into();
+        let inner = Arc::clone(&self.inner);
         async move {
             loop {
                 Self::random_delay(25..50).await;
+                let inner = inner.read().unwrap();
+                let callback = inner.callbacks.get(address).map(Arc::clone);
+                drop(inner);
                 if let Some(callback) = callback.as_ref() {
                     if Self::should_drop(from, address) {
                         continue;
@@ -124,13 +126,13 @@ impl<M: Message> Transport for Channel<M> {
         }
     }
 
-    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message>) {
+    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + Debug) {
+        let from = self.address;
+        println!("{from} do-sending {message:?} to {address}");
+        let message = message.into();
         let inner = self.inner.read().unwrap();
         let callback = inner.callbacks.get(address).map(Arc::clone);
         drop(inner);
-        let from = self.address;
-        let message = message.into();
-        println!("{from} do-sending {message:?} to {address}");
         if let Some(callback) = callback {
             if !Self::should_drop(self.address, address) {
                 std::thread::spawn(move || {

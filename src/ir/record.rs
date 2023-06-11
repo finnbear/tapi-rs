@@ -1,10 +1,19 @@
 use super::OpId;
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub(crate) enum State {
     Finalized,
     Tentative,
+}
+
+impl Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Finalized => "Fin",
+            Self::Tentative => "Tnt",
+        })
+    }
 }
 
 impl State {
@@ -17,10 +26,19 @@ impl State {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub(crate) enum Consistency {
     Inconsistent,
     Consensus,
+}
+
+impl Debug for Consistency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Inconsistent => "Inc",
+            Self::Consensus => "Con",
+        })
+    }
 }
 
 impl Consistency {
