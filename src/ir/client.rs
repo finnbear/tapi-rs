@@ -269,27 +269,27 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                         );
                     }
                     return result.clone();
-                } else if let Some(result) = finalized.cloned().or_else(|| {
+                } else if let Some((result, reply_consensus_view)) = finalized.map(|f| (f.clone(), None)).or_else(|| {
                     let view_number = get_quorum(membership_size, &results, false).map(|(v, _)| v);
                     view_number.map(|view_number| {
-                        decide(
+                        (decide(
                             results
                                 .into_values()
                                 .filter(|rc| rc.view_number == view_number)
                                 .map(|rc| rc.result)
                                 .collect::<Vec<_>>(),
-                        )
+                        ), Some(view_number))
                     })
                 }) {
-                    fn has_quorum(membership: MembershipSize, results: &HashMap<ReplicaIndex, Confirm>) -> bool {
+                    fn get_quorum_view(membership: MembershipSize, results: &HashMap<ReplicaIndex, Confirm>) -> Option<ViewNumber> {
                         let threshold = membership.f_plus_one();
                         for result in results.values() {
                             let matching = results.values().filter(|other| other.view_number == result.view_number).count();
                             if matching >= threshold {
-                                return true;
+                                return Some(result.view_number);
                             }
                         }
-                        false
+                        None
                     }
 
                     // Slow path.
@@ -307,7 +307,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                             )
                         }),
                         |results: &HashMap<ReplicaIndex, Confirm>, timeout: bool| {
-                            has_quorum(membership_size, results) || (timeout && results.len() >= membership_size.f_plus_one())
+                            get_quorum_view(membership_size, results).is_some() || (timeout && results.len() >= membership_size.f_plus_one())
                         },
                         Some(T::sleep(Duration::from_secs(1))),
                     );
@@ -319,7 +319,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                         &*sync,
                         results.iter().map(|(i, r)| (*i, r.view_number)),
                     );
-                    if has_quorum(membership_size, &results) {
+                    if let Some(quorum_view) = get_quorum_view(membership_size, &results) && reply_consensus_view.map(|reply_consensus_view| quorum_view == reply_consensus_view).unwrap_or(true) {
                         return result;
                     }
                 }

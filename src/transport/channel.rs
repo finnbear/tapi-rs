@@ -61,7 +61,9 @@ impl<M> Clone for Channel<M> {
 }
 
 impl<M: Message> Channel<M> {
-    fn should_drop(_from: usize, _to: usize) -> bool {
+    fn should_drop(from: usize, to: usize) -> bool {
+        //from == 0 || to == 0
+
         use rand::Rng;
         rand::thread_rng().gen_bool(0.4)
     }
@@ -83,7 +85,7 @@ impl<M: Message> Transport for Channel<M> {
     }
 
     fn sleep(duration: Duration) -> Self::Sleep {
-        tokio::time::sleep(duration / 10)
+        tokio::time::sleep(duration / 5)
     }
 
     fn send<R: TryFrom<M>>(
@@ -98,8 +100,8 @@ impl<M: Message> Transport for Channel<M> {
         let from = self.address;
         println!("{from} sending {message:?} to {address}");
         async move {
-            Self::random_delay(5..10).await;
             loop {
+                Self::random_delay(25..50).await;
                 if let Some(callback) = callback.as_ref() {
                     if Self::should_drop(from, address) {
                         continue;
@@ -118,7 +120,6 @@ impl<M: Message> Transport for Channel<M> {
                 } else {
                     println!("unknown address {address:?}");
                 }
-                Self::random_delay(25..50).await;
             }
         }
     }

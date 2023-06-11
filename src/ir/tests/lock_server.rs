@@ -148,7 +148,7 @@ async fn lock_server(num_replicas: usize) {
         )
     }
 
-    let _replicas = (0..num_replicas)
+    let replicas = (0..num_replicas)
         .map(|i| create_replica(IrReplicaIndex(i), &registry, &membership))
         .collect::<Vec<_>>();
 
@@ -201,6 +201,7 @@ async fn lock_server(num_replicas: usize) {
 
     ChannelTransport::<Message>::sleep(Duration::from_secs(10)).await;
 
+    println!("@@@@@ INVOKE {replicas:?}");
     assert_eq!(
         clients[1]
             .invoke_consensus(Op::Lock(clients[1].id()), &decide_lock)
