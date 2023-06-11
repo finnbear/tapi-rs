@@ -5,13 +5,17 @@ mod message;
 pub(crate) use channel::{Channel, Registry as ChannelRegistry};
 pub(crate) use error::Error;
 pub(crate) use message::Message;
-use std::{fmt::Debug, future::Future};
+use std::{fmt::Debug, future::Future, time::Duration};
+
 pub(crate) trait Transport: Clone + Send + Sync + 'static {
     type Address: Copy + Debug + Send + 'static;
+    type Sleep: Future<Output = ()> + Send;
     type Message: Message;
 
     /// Get own address.
     fn address(&self) -> Self::Address;
+
+    fn sleep(duration: Duration) -> Self::Sleep;
 
     /// Send/retry, ignoring any errors, until there is a reply.
     fn send<R: TryFrom<Self::Message>>(

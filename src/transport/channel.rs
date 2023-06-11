@@ -1,9 +1,10 @@
 use rand::{thread_rng, Rng};
 
-use super::{Error, Message};
+use super::{Error, Message, Transport};
 use std::future::Future;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 pub(crate) struct Registry<M> {
     inner: Arc<RwLock<Inner<M>>>,
@@ -59,25 +60,30 @@ impl<M> Clone for Channel<M> {
     }
 }
 
-impl<M> Channel<M> {
+impl<M: Message> Channel<M> {
     fn should_drop(_from: usize, _to: usize) -> bool {
         use rand::Rng;
         rand::thread_rng().gen_bool(0.5)
     }
 
-    fn random_delay(range: Range<u64>) -> impl Future<Output = ()> {
-        tokio::time::sleep(std::time::Duration::from_millis(
-            thread_rng().gen_range(1..5),
+    fn random_delay(range: Range<u64>) -> <Self as Transport>::Sleep {
+        Self::sleep(std::time::Duration::from_millis(
+            thread_rng().gen_range(range),
         ))
     }
 }
 
-impl<M: Message> super::Transport for Channel<M> {
+impl<M: Message> Transport for Channel<M> {
     type Address = usize;
+    type Sleep = tokio::time::Sleep;
     type Message = M;
 
     fn address(&self) -> Self::Address {
         self.address
+    }
+
+    fn sleep(duration: Duration) -> Self::Sleep {
+        tokio::time::sleep(duration)
     }
 
     fn send<R: TryFrom<M>>(

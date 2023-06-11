@@ -74,7 +74,7 @@ struct Sync<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
     status: Status,
     view: View<T>,
     lastest_normal_view: ViewNumber,
-    view_change_timeout: Instant,
+    changed_view_recently: bool,
     upcalls: U,
     record: Record<U::Op, U::Result>,
     outstanding_do_view_changes: HashMap<Index, DoViewChange<U::Op, U::Result>>,
@@ -95,7 +95,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                         number: ViewNumber(0),
                     },
                     lastest_normal_view: ViewNumber(0),
-                    view_change_timeout: Instant::now() + Self::VIEW_CHANGE_INTERVAL,
+                    changed_view_recently: true,
                     upcalls,
                     record: Record::default(),
                     outstanding_do_view_changes: HashMap::new(),
@@ -110,10 +110,12 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
         let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                T::sleep(Self::VIEW_CHANGE_INTERVAL).await;
 
                 let mut sync = inner.sync.lock().unwrap();
-                if Instant::now() >= sync.view_change_timeout {
+                if sync.changed_view_recently {
+                    sync.changed_view_recently = false;
+                } else {
                     if sync.status.is_normal() {
                         sync.status = Status::ViewChanging;
                     }
@@ -131,7 +133,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
     }
 
     fn broadcast_do_view_change(my_index: Index, transport: &T, sync: &mut Sync<U, T>) {
-        sync.view_change_timeout = Instant::now() + Self::VIEW_CHANGE_INTERVAL;
+        sync.changed_view_recently = true;
         for (index, address) in &sync.view.membership {
             if index == my_index {
                 continue;
@@ -383,8 +385,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
 
                                     sync.record = R;
                                 }
-                                sync.view_change_timeout =
-                                    Instant::now() + Self::VIEW_CHANGE_INTERVAL;
+                                sync.changed_view_recently = true;
                                 sync.status = Status::Normal;
                                 sync.view.number = msg_view_number;
                                 sync.lastest_normal_view = msg_view_number;

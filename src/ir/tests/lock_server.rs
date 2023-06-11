@@ -9,7 +9,19 @@ use std::{
 };
 
 #[tokio::test]
-async fn lock_server() {
+async fn test_lock_server() {
+    lock_server(3).await;
+
+    /*
+    for _ in 0..10 {
+        for r in (3..=9).step_by(2) {
+            lock_server(r).await;
+        }
+    }
+    */
+}
+
+async fn lock_server(num_replicas: usize) {
     #[derive(Debug, Clone)]
     enum Op {
         Lock(IrClientId),
@@ -118,10 +130,7 @@ async fn lock_server() {
     }
 
     let registry = ChannelRegistry::default();
-
-    const REPLICAS: usize = 5;
-
-    let membership = IrMembership::new((0..REPLICAS).collect::<Vec<_>>());
+    let membership = IrMembership::new((0..num_replicas).collect::<Vec<_>>());
 
     fn create_replica(
         index: IrReplicaIndex,
@@ -139,7 +148,7 @@ async fn lock_server() {
         )
     }
 
-    let replicas = (0..REPLICAS)
+    let replicas = (0..num_replicas)
         .map(|i| create_replica(IrReplicaIndex(i), &registry, &membership))
         .collect::<Vec<_>>();
 
@@ -164,7 +173,7 @@ async fn lock_server() {
     let decide_lock = |results: Vec<Res>| {
         let ok = results.iter().filter(|&r| r == &Res::Ok).count();
         //println!("deciding {ok} of {} : {results:?}", results.len());
-        if ok >= (REPLICAS - 1) / 2 + 1 {
+        if ok >= (num_replicas - 1) / 2 + 1 {
             Res::Ok
         } else {
             Res::No

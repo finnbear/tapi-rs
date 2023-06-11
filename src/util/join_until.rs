@@ -8,16 +8,15 @@ use std::pin::Pin;
 use std::task::{ready, Context, Poll};
 use std::time::Duration;
 use tokio::select;
-use tokio::time::Sleep;
 
 pin_project! {
     /// Future for the [`join_n`] function.
     #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub(crate) struct JoinUntil<K, F: Future, U: Until<K, F::Output>> {
+    pub(crate) struct JoinUntil<K, F: Future, U: Until<K, F::Output>, S = tokio::time::Sleep> {
         #[pin]
         active: FuturesOrdered<KeyedFuture<K, F>>,
         #[pin]
-        timeout: Option<Sleep>,
+        timeout: Option<S>,
         output: HashMap<K, F::Output>,
         until: U
     }
@@ -57,11 +56,11 @@ impl<K, F: Future> Future for KeyedFuture<K, F> {
     }
 }
 
-pub(crate) fn join_until<K, F, I: IntoIterator<Item = (K, F)>, U: Until<K, F::Output>>(
+pub(crate) fn join_until<K, F, I: IntoIterator<Item = (K, F)>, U: Until<K, F::Output>, S>(
     iter: I,
     until: U,
-    timeout: Option<Duration>,
-) -> JoinUntil<K, F, U>
+    timeout: Option<S>,
+) -> JoinUntil<K, F, U, S>
 where
     F: Future,
 {
@@ -77,25 +76,21 @@ where
         output: HashMap::with_capacity(active.len()),
         active,
         until,
-        timeout: timeout.map(tokio::time::sleep),
+        timeout,
     }
 }
 
-impl<K: Eq + Hash, F, U: Until<K, F::Output>> Future for JoinUntil<K, F, U>
+impl<K: Eq + Hash, F, U: Until<K, F::Output>, S: Future<Output = ()>> Future
+    for JoinUntil<K, F, U, S>
 where
     F: Future,
 {
     type Output = HashMap<K, F::Output>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut elapsed = false;
         let mut this = self.project();
         loop {
-            let elapsed = this
-                .timeout
-                .as_mut()
-                .as_pin_mut()
-                .map(|s| s.is_elapsed())
-                .unwrap_or(false);
             if !this.until.until(this.output, elapsed) {
                 match this.active.as_mut().poll_next(cx) {
                     Poll::Ready(Some((k, x))) => {
@@ -107,8 +102,9 @@ where
                     }
                     Poll::Pending => {
                         if let Some(timeout) = this.timeout.as_mut().as_pin_mut() && !elapsed {
-                            if timeout.poll(cx).is_ready() {
+                            if Future::poll(timeout, cx).is_ready() {
                                 // Timeout is done, check again
+                                elapsed = true;
                                 continue;
                             } else {
                                 // Wait for timeout too

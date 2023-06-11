@@ -148,7 +148,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                     move |results: &HashMap<ReplicaIndex, ReplyInconsistent>, timeout: bool| {
                         has_quorum(membership_size, results, !timeout)
                     },
-                    Some(Duration::from_secs(1)),
+                    Some(T::sleep(Duration::from_secs(1))),
                 );
                 drop(sync);
 
@@ -241,7 +241,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                         get_finalized(results).is_some()
                             || get_quorum(membership_size, results, !timeout).is_some()
                     },
-                    Some(Duration::from_secs(1)),
+                    Some(T::sleep(Duration::from_secs(1))),
                 );
                 drop(sync);
 
@@ -309,7 +309,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                         |results: &HashMap<ReplicaIndex, Confirm>, timeout: bool| {
                             has_quorum(membership_size, results) || (timeout && results.len() >= membership_size.f_plus_one())
                         },
-                        Some(Duration::from_secs(1)),
+                        Some(T::sleep(Duration::from_secs(1))),
                     );
                     drop(sync);
                     let results = future.await;
