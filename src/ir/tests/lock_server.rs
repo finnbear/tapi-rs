@@ -3,7 +3,7 @@ use crate::{
     IrRecord, IrRecordEntry, IrReplica, IrReplicaIndex, IrReplicaUpcalls, Transport,
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -37,8 +37,10 @@ async fn lock_server() {
         }
         fn exec_inconsistent(&mut self, op: &Self::Op) {
             match op {
-                &Op::Unlock(client_id) if Some(client_id) == self.locked => {
-                    self.locked = None;
+                &Op::Unlock(client_id) => {
+                    if Some(client_id) == self.locked {
+                        self.locked = None;
+                    }
                 }
                 _ => panic!(),
             }
@@ -56,7 +58,30 @@ async fn lock_server() {
                 _ => panic!(),
             }
         }
-        fn sync(&mut self, record: &IrRecord<Self::Op, Self::Result>) {}
+        fn sync(&mut self, record: &IrRecord<Self::Op, Self::Result>) {
+            self.locked = None;
+
+            let mut locked = HashSet::<IrClientId>::new();
+            let mut unlocked = HashSet::<IrClientId>::new();
+            for (op_id, entry) in &record.entries {
+                if matches!(entry.result, Some(Res::Ok)) {
+                    match entry.op {
+                        Op::Lock(client_id) => {
+                            locked.insert(client_id);
+                        }
+                        Op::Unlock(client_id) => {
+                            unlocked.insert(client_id);
+                        }
+                    }
+                }
+            }
+
+            for client_id in locked {
+                if !unlocked.contains(&client_id) {
+                    self.locked = Some(client_id);
+                }
+            }
+        }
         fn merge(
             &mut self,
             d: HashMap<IrOpId, Vec<IrRecordEntry<Self::Op, Self::Result>>>,
