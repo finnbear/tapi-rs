@@ -161,7 +161,8 @@ impl<M: Message> Transport for Channel<M> {
         drop(inner);
         if let Some(callback) = callback {
             if !Self::should_drop(self.address, address) {
-                std::thread::spawn(move || {
+                tokio::spawn(async move {
+                    Self::random_delay(25..50).await;
                     callback(from, message);
                 });
             }

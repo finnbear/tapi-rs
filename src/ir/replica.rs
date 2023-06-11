@@ -65,9 +65,9 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Debug for Re
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Replica");
         if let Ok(sync) = self.inner.sync.try_lock() {
-            s.field("status", &sync.status);
+            s.field("stat", &sync.status);
             s.field("view", &sync.view.number);
-            s.field("last_normal_view", &sync.latest_normal_view);
+            s.field("last_norm_view", &sync.latest_normal_view);
         }
         s.finish_non_exhaustive()
     }

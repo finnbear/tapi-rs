@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) struct Id(pub(crate) u64);
 
 impl Id {
@@ -31,6 +31,12 @@ impl Id {
         } else {
             rng.gen()
         })
+    }
+}
+
+impl Debug for Id {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "C({})", self.0)
     }
 }
 
