@@ -13,8 +13,8 @@ async fn test_lock_server() {
     lock_server(3).await;
 
     /*
-    for _ in 0..10 {
-        for r in (3..=9).step_by(2) {
+    for _ in 0..3 {
+        for r in (3..=7).step_by(2) {
             lock_server(r).await;
         }
     }
@@ -180,7 +180,7 @@ async fn lock_server(num_replicas: usize) {
         }
     };
 
-    for _ in 0..2 {
+    for _ in 0..5 {
         assert_eq!(
             clients[0]
                 .invoke_consensus(Op::Lock(clients[0].id()), &decide_lock)
@@ -193,6 +193,7 @@ async fn lock_server(num_replicas: usize) {
                 .await,
             Res::No
         );
+        ChannelTransport::<Message>::sleep(Duration::from_millis(100)).await;
     }
 
     clients[0]

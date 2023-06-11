@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     ir::{membership, Confirm, FinalizeConsensus, Replica, ReplyConsensus, ReplyInconsistent},
-    util::join_until,
+    util::join_into,
     Transport,
 };
 use rand::{thread_rng, Rng};
@@ -143,7 +143,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
             loop {
                 let sync = inner.sync.lock().unwrap();
                 let membership_size = sync.membership.size();
-                let future = join_until(
+                let future = join_into(
                     sync.membership.iter().map(|(index, address)| {
                         (
                             index,
@@ -227,13 +227,14 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
         let inner = Arc::clone(&self.inner);
 
         async move {
-            'retry: loop {
+            loop {
                 let mut sync = inner.sync.lock().unwrap();
                 let number = sync.next_number();
                 let op_id = OpId { client_id, number };
                 let membership_size = sync.membership.size();
 
-                let future = join_until(
+                let mut results = HashMap::<ReplicaIndex, ReplyConsensus<R>>::new();
+                let future = join_into(
                     sync.membership.iter().map(|(index, address)| {
                         (
                             index,
@@ -246,17 +247,34 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                             ),
                         )
                     }),
-                    move |results: &HashMap<ReplicaIndex, ReplyConsensus<R>>, timeout: bool| {
-                        println!("pending: {results:?}");
-                        // TODO: Liveness
-                        get_finalized(results).is_some()
-                            || get_quorum(membership_size, results, !timeout).is_some()
+                    |index: ReplicaIndex, reply: ReplyConsensus<R>| {
+                        results.insert(index, reply);
                     },
-                    Some(T::sleep(Duration::from_secs(1))),
                 );
                 drop(sync);
 
-                let results = future.await;
+                let timeout = T::sleep(Duration::from_secs(1));
+
+                loop {
+                    if get_finalized(results).is_some() {
+                        break;
+                    }
+                    if get_quorum(membership_size, results, true).is_some() {
+                        break;
+                    }
+                    if timedout && results.len() >= membership_size.f_plus_one() {
+
+                    }
+
+                    let results = tokio::select! {
+                        _ = future => {}
+                        _ = timeout => {
+                            timedout = true;
+                        }
+                    }
+        
+                }
+                
                 let sync = inner.sync.lock().unwrap();
 
                 Self::notify_old_views(
@@ -304,7 +322,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                     }
 
                     // Slow path.
-                    let future = join_until(
+                    let future = join_into(
                         sync.membership.iter().map(|(index, address)| {
                             (
                                 index,

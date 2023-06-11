@@ -69,10 +69,8 @@ impl<M> Clone for Channel<M> {
 
 impl<M: Message> Channel<M> {
     fn should_drop(from: usize, to: usize) -> bool {
-        //from == 0 || to == 0
-
         use rand::Rng;
-        rand::thread_rng().gen_bool(1.0 / 3.0)
+        rand::thread_rng().gen_bool(1.0 / 3.0) // || from == 0 || to == 0
     }
 
     fn random_delay(range: Range<u64>) -> <Self as Transport>::Sleep {
@@ -92,7 +90,7 @@ impl<M: Message> Transport for Channel<M> {
     }
 
     fn sleep(duration: Duration) -> Self::Sleep {
-        tokio::time::sleep(duration / 5)
+        tokio::time::sleep(duration / 15)
     }
 
     fn persist<T: Serialize>(&self, key: &str, value: Option<&T>) {

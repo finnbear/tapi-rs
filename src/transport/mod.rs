@@ -4,6 +4,7 @@ mod message;
 
 pub(crate) use channel::{Channel, Registry as ChannelRegistry};
 pub(crate) use error::Error;
+use futures::future::Fuse;
 pub(crate) use message::Message;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{fmt::Debug, future::Future, time::Duration};
