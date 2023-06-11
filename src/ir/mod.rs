@@ -1,5 +1,4 @@
 mod client;
-mod error;
 mod membership;
 mod message;
 mod op;
@@ -11,7 +10,6 @@ mod view;
 mod tests;
 
 pub(crate) use client::{Client, Id as ClientId};
-pub(crate) use error::Error;
 pub(crate) use membership::{Membership, Size as MembershipSize};
 pub(crate) use message::{
     Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent, Message, ProposeConsensus,

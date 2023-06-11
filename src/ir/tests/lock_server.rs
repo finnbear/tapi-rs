@@ -4,7 +4,7 @@ use crate::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 
@@ -148,7 +148,7 @@ async fn lock_server(num_replicas: usize) {
         )
     }
 
-    let replicas = (0..num_replicas)
+    let _replicas = (0..num_replicas)
         .map(|i| create_replica(IrReplicaIndex(i), &registry, &membership))
         .collect::<Vec<_>>();
 
@@ -199,7 +199,7 @@ async fn lock_server(num_replicas: usize) {
         .invoke_inconsistent(Op::Unlock(clients[0].id()))
         .await;
 
-    tokio::time::sleep(Duration::from_secs(6)).await;
+    ChannelTransport::<Message>::sleep(Duration::from_secs(10)).await;
 
     assert_eq!(
         clients[1]

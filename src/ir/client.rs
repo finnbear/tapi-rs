@@ -1,5 +1,5 @@
 use super::{
-    error::Error, DoViewChange, FinalizeInconsistent, Membership, MembershipSize, Message, OpId,
+    DoViewChange, FinalizeInconsistent, Membership, MembershipSize, Message, OpId,
     ProposeConsensus, ProposeInconsistent, ReplicaIndex, ViewChangeAddendum, ViewNumber,
 };
 use crate::{
@@ -94,7 +94,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
         }
     }
 
-    pub(crate) fn invoke_inconsistent(&self, op: O) -> impl Future<Output = Result<(), Error>> {
+    pub(crate) fn invoke_inconsistent(&self, op: O) -> impl Future<Output = ()> {
         let client_id = self.id;
         let inner = Arc::clone(&self.inner);
 
@@ -170,7 +170,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                         .transport
                         .do_send(address, FinalizeInconsistent { op_id });
                 }
-                return Ok(());
+                return;
             }
         }
     }
