@@ -64,20 +64,23 @@ async fn lock_server() {
             let mut locked = HashSet::<IrClientId>::new();
             let mut unlocked = HashSet::<IrClientId>::new();
             for (op_id, entry) in &record.entries {
-                if matches!(entry.result, Some(Res::Ok)) {
-                    match entry.op {
-                        Op::Lock(client_id) => {
+                match entry.op {
+                    Op::Lock(client_id) => {
+                        if matches!(entry.result, Some(Res::Ok)) {
                             locked.insert(client_id);
                         }
-                        Op::Unlock(client_id) => {
-                            unlocked.insert(client_id);
-                        }
+                    }
+                    Op::Unlock(client_id) => {
+                        unlocked.insert(client_id);
                     }
                 }
             }
 
             for client_id in locked {
                 if !unlocked.contains(&client_id) {
+                    if self.locked.is_some() {
+                        panic!();
+                    }
                     self.locked = Some(client_id);
                 }
             }
@@ -88,7 +91,29 @@ async fn lock_server() {
             u: HashMap<IrOpId, Vec<IrRecordEntry<Self::Op, Self::Result>>>,
             majority_results_in_d: HashMap<IrOpId, Self::Result>,
         ) -> HashMap<IrOpId, Self::Result> {
-            Default::default()
+            let mut results = HashMap::<IrOpId, Self::Result>::new();
+
+            for (op_id, entries) in &d {
+                let request = entries[0].op.clone();
+                let Op::Lock(client_id) = request else {
+                    panic!();
+                };
+                let reply = majority_results_in_d.get(op_id).unwrap();
+
+                let successful = matches!(reply, Res::Ok);
+
+                if successful && self.locked.is_none() {
+                    self.locked = Some(client_id);
+                    results.insert(*op_id, Res::Ok);
+                } else {
+                    results.insert(*op_id, Res::No);
+                }
+
+                for (op_id, entries) in &u {
+                    results.insert(*op_id, Res::No);
+                }
+            }
+            results
         }
     }
 

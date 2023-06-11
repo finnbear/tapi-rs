@@ -89,7 +89,7 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
-        Poll::Ready(loop {
+        loop {
             let elapsed = this
                 .timeout
                 .as_mut()
@@ -112,17 +112,17 @@ where
                                 continue;
                             } else {
                                 // Wait for timeout too
-                                return Poll::Pending
+                                return Poll::Pending;
                             }
                         } else {
                             // No timeout
-                            return Poll::Pending
+                            return Poll::Pending;
                         }
                     }
                 }
             }
 
-            break mem::take(this.output);
-        })
+            return Poll::Ready(mem::take(this.output));
+        }
     }
 }

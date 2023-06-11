@@ -236,7 +236,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                         )
                     }),
                     move |results: &HashMap<ReplicaIndex, ReplyConsensus<R>>, timeout: bool| {
-                        println!("{results:?}");
+                        println!("pending: {results:?}");
                         // TODO: Liveness
                         get_finalized(results).is_some()
                             || get_quorum(membership_size, results, !timeout).is_some()
