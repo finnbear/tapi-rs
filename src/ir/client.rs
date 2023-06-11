@@ -165,7 +165,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                         has_quorum(
                             membership_size,
                             results,
-                            Future::poll(timeout.as_mut(), cx).is_ready(),
+                            timeout.as_mut().poll(cx).is_ready(),
                         )
                     },
                 );
@@ -317,7 +317,9 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                     }
 
                     // Slow path.
-                    let mut timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
+                    let mut soft_timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
+                    let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_secs(3)));
+
                     let future = join_until(
                         sync.membership.iter().map(|(index, address)| {
                             (
@@ -332,7 +334,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                             )
                         }),
                         |results: &HashMap<ReplicaIndex, Confirm>, cx: &mut Context<'_>| {
-                            get_quorum_view(membership_size, results).is_some() || (timeout.as_mut().poll(cx).is_ready() && results.len() >= membership_size.f_plus_one())
+                            get_quorum_view(membership_size, results).is_some() || (soft_timeout.as_mut().poll(cx).is_ready() && results.len() >= membership_size.f_plus_one()) || hard_timeout.as_mut().poll(cx).is_ready()
                         },
                     );
                     drop(sync);

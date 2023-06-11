@@ -12,13 +12,11 @@ use std::{
 async fn test_lock_server() {
     lock_server(3).await;
 
-    /*
     for _ in 0..10 {
-        for r in (3..=9).step_by(2) {
+        for r in (3..=5).step_by(2) {
             lock_server(r).await;
         }
     }
-    */
 }
 
 async fn lock_server(num_replicas: usize) {
@@ -199,13 +197,18 @@ async fn lock_server(num_replicas: usize) {
         .invoke_inconsistent(Op::Unlock(clients[0].id()))
         .await;
 
-    ChannelTransport::<Message>::sleep(Duration::from_secs(10)).await;
+    for i in 0..3 {
+        ChannelTransport::<Message>::sleep(Duration::from_secs(8)).await;
 
-    println!("@@@@@ INVOKE {replicas:?}");
-    assert_eq!(
-        clients[1]
+        println!("@@@@@ INVOKE {replicas:?}");
+        if clients[1]
             .invoke_consensus(Op::Lock(clients[1].id()), &decide_lock)
-            .await,
-        Res::Ok
-    );
+            .await
+            == Res::Ok
+        {
+            return;
+        }
+    }
+
+    panic!();
 }

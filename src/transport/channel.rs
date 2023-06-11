@@ -92,7 +92,7 @@ impl<M: Message> Transport for Channel<M> {
     }
 
     fn sleep(duration: Duration) -> Self::Sleep {
-        tokio::time::sleep(duration / 5)
+        tokio::time::sleep(duration / 15)
     }
 
     fn persist<T: Serialize>(&self, key: &str, value: Option<&T>) {
