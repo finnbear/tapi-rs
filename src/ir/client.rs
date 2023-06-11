@@ -70,6 +70,10 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
         }
     }
 
+    pub(crate) fn id(&self) -> Id {
+        self.id
+    }
+
     pub(crate) fn invoke_inconsistent(&self, op: O) -> impl Future<Output = Result<(), Error>> {
         let client_id = self.id;
         let inner = Arc::clone(&self.inner);

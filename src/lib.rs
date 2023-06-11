@@ -9,8 +9,8 @@ mod transport;
 pub(crate) mod util;
 
 pub(crate) use ir::{
-    Client as IrClient, Membership as IrMembership, Message as IrMessage, OpId as IrOpId,
-    Record as IrRecord, RecordEntry as IrRecordEntry, Replica as IrReplica,
+    Client as IrClient, ClientId as IrClientId, Membership as IrMembership, Message as IrMessage,
+    OpId as IrOpId, Record as IrRecord, RecordEntry as IrRecordEntry, Replica as IrReplica,
     ReplicaIndex as IrReplicaIndex, ReplicaUpcalls as IrReplicaUpcalls,
 };
 pub(crate) use transport::{

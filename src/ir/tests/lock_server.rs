@@ -1,6 +1,6 @@
 use crate::{
-    ChannelRegistry, ChannelTransport, IrClient, IrMembership, IrMessage, IrOpId, IrRecord,
-    IrRecordEntry, IrReplica, IrReplicaIndex, IrReplicaUpcalls, Transport,
+    ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMessage, IrOpId,
+    IrRecord, IrRecordEntry, IrReplica, IrReplicaIndex, IrReplicaUpcalls, Transport,
 };
 use std::{
     collections::HashMap,
@@ -12,8 +12,8 @@ use std::{
 async fn lock_server() {
     #[derive(Debug, Clone)]
     enum Op {
-        Lock,
-        Unlock,
+        Lock(IrClientId),
+        Unlock(IrClientId),
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -25,7 +25,7 @@ async fn lock_server() {
     type Message = IrMessage<Op, Res>;
 
     struct Upcalls {
-        locked: bool,
+        locked: Option<IrClientId>,
     }
 
     impl IrReplicaUpcalls for Upcalls {
@@ -37,20 +37,20 @@ async fn lock_server() {
         }
         fn exec_inconsistent(&mut self, op: &Self::Op) {
             match op {
-                Op::Unlock => {
-                    self.locked = false;
+                &Op::Unlock(client_id) if Some(client_id) == self.locked => {
+                    self.locked = None;
                 }
                 _ => panic!(),
             }
         }
         fn exec_consensus(&mut self, op: &Self::Op) -> Self::Result {
             match op {
-                Op::Lock => {
-                    if self.locked {
-                        Res::No
-                    } else {
-                        self.locked = true;
+                &Op::Lock(client_id) => {
+                    if self.locked.is_none() || self.locked == Some(client_id) {
+                        self.locked = Some(client_id);
                         Res::Ok
+                    } else {
+                        Res::No
                     }
                 }
                 _ => panic!(),
@@ -83,7 +83,7 @@ async fn lock_server() {
                 let weak = weak.clone();
                 let channel =
                     registry.channel(move |from, message| weak.upgrade()?.receive(from, message));
-                let upcalls = Upcalls { locked: false };
+                let upcalls = Upcalls { locked: None };
                 IrReplica::new(index, membership.clone(), upcalls, channel)
             },
         )
@@ -107,7 +107,9 @@ async fn lock_server() {
         )
     }
 
-    let client = create_client(&registry, &membership);
+    let clients = (0..2)
+        .map(|_| create_client(&registry, &membership))
+        .collect::<Vec<_>>();
 
     let decide_lock = |results: Vec<Res>| {
         let ok = results.iter().filter(|&r| r == &Res::Ok).count();
@@ -119,20 +121,31 @@ async fn lock_server() {
         }
     };
 
-    assert_eq!(
-        client.invoke_consensus(Op::Lock, &decide_lock).await,
-        Res::Ok
-    );
-    assert_eq!(
-        client.invoke_consensus(Op::Lock, &decide_lock).await,
-        Res::No
-    );
-    client.invoke_inconsistent(Op::Unlock).await;
+    for _ in 0..2 {
+        assert_eq!(
+            clients[0]
+                .invoke_consensus(Op::Lock(clients[0].id()), &decide_lock)
+                .await,
+            Res::Ok
+        );
+        assert_eq!(
+            clients[1]
+                .invoke_consensus(Op::Lock(clients[1].id()), &decide_lock)
+                .await,
+            Res::No
+        );
+    }
+
+    clients[0]
+        .invoke_inconsistent(Op::Unlock(clients[0].id()))
+        .await;
 
     tokio::time::sleep(Duration::from_secs(6)).await;
 
     assert_eq!(
-        client.invoke_consensus(Op::Lock, &decide_lock).await,
+        clients[1]
+            .invoke_consensus(Op::Lock(clients[1].id()), &decide_lock)
+            .await,
         Res::Ok
     );
 }
