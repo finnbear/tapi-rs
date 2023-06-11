@@ -1,8 +1,8 @@
 use super::{
-    record::Consistency, Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent,
-    Membership, Message, OpId, ProposeConsensus, ProposeInconsistent, Record, RecordEntry,
-    RecordEntryState, ReplyConsensus, ReplyInconsistent, RequestUnlogged, StartView, View,
-    ViewNumber,
+    message::ViewChangeAddendum, record::Consistency, Confirm, DoViewChange, FinalizeConsensus,
+    FinalizeInconsistent, Membership, Message, OpId, ProposeConsensus, ProposeInconsistent, Record,
+    RecordEntry, RecordEntryState, ReplyConsensus, ReplyInconsistent, RequestUnlogged, StartView,
+    View, ViewNumber,
 };
 use crate::{Transport, TransportMessage};
 use std::{
@@ -139,10 +139,12 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
             transport.do_send(
                 address,
                 Message::DoViewChange(DoViewChange {
-                    replica_index: my_index,
-                    record: (index == sync.view.leader_index()).then(|| sync.record.clone()),
                     view_number: sync.view.number,
-                    latest_normal_view: sync.lastest_normal_view,
+                    addendum: (index == sync.view.leader_index()).then(|| ViewChangeAddendum {
+                        record: sync.record.clone(),
+                        replica_index: my_index,
+                        latest_normal_view: sync.lastest_normal_view,
+                    }),
                 }),
             )
         }
@@ -206,7 +208,11 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                             result,
                             state,
                         }));
+                    } else {
+                        println!("{:?} no consensus result", self.index);
                     }
+                } else {
+                    //println!("{:?} abnormal", self.index);
                 }
             }
             Message::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
@@ -250,9 +256,9 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                         );
                     }
 
-                    if self.index == sync.view.leader_index() {
+                    if self.index == sync.view.leader_index() && let Some(addendum) = msg.addendum.as_ref() {
                         let msg_view_number = msg.view_number;
-                        match sync.outstanding_do_view_changes.entry(msg.replica_index) {
+                        match sync.outstanding_do_view_changes.entry(addendum.replica_index) {
                             Entry::Vacant(vacant) => {
                                 vacant.insert(msg);
                             }
@@ -277,14 +283,19 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     let latest_normal_view = sync.lastest_normal_view.max(
                                         matching
                                             .clone()
-                                            .map(|r| r.latest_normal_view)
+                                            .map(|r| {
+                                                r.addendum.as_ref().unwrap().latest_normal_view
+                                            })
                                             .max()
                                             .unwrap(),
                                     );
                                     let mut latest_records = matching
                                         .clone()
-                                        .filter(|r| r.latest_normal_view == latest_normal_view)
-                                        .map(|r| r.record.as_ref().unwrap().clone())
+                                        .filter(|r| {
+                                            r.addendum.as_ref().unwrap().latest_normal_view
+                                                == latest_normal_view
+                                        })
+                                        .map(|r| r.addendum.as_ref().unwrap().record.clone())
                                         .collect::<Vec<_>>();
                                     if sync.lastest_normal_view == latest_normal_view {
                                         latest_records.push(sync.record.clone());

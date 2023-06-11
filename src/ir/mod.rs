@@ -16,7 +16,7 @@ pub(crate) use membership::{Membership, Size as MembershipSize};
 pub(crate) use message::{
     Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent, Message, ProposeConsensus,
     ProposeInconsistent, ReplyConsensus, ReplyInconsistent, ReplyUnlogged, RequestUnlogged,
-    StartView,
+    StartView, ViewChangeAddendum,
 };
 pub(crate) use op::Id as OpId;
 pub(crate) use record::{Consistency, Entry as RecordEntry, Record, State as RecordEntryState};

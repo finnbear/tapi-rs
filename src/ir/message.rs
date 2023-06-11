@@ -71,9 +71,14 @@ pub(crate) struct Confirm {
 
 #[derive(Debug, Clone)]
 pub(crate) struct DoViewChange<O, R> {
-    pub(crate) replica_index: ReplicaIndex,
-    pub(crate) record: Option<Record<O, R>>,
     pub(crate) view_number: ViewNumber,
+    pub(crate) addendum: Option<ViewChangeAddendum<O, R>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ViewChangeAddendum<O, R> {
+    pub(crate) replica_index: ReplicaIndex,
+    pub(crate) record: Record<O, R>,
     pub(crate) latest_normal_view: ViewNumber,
 }
 

@@ -1,6 +1,6 @@
 use super::{
-    error::Error, FinalizeInconsistent, Membership, MembershipSize, Message, OpId,
-    ProposeConsensus, ProposeInconsistent, ReplicaIndex, ViewNumber,
+    error::Error, DoViewChange, FinalizeInconsistent, Membership, MembershipSize, Message, OpId,
+    ProposeConsensus, ProposeInconsistent, ReplicaIndex, ViewChangeAddendum, ViewNumber,
 };
 use crate::{
     ir::{membership, Confirm, FinalizeConsensus, Replica, ReplyConsensus, ReplyInconsistent},
@@ -130,6 +130,22 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
 
                 let results = future.await;
                 if !has_quorum(membership_size, &results, true) {
+                    if let Some(latest_view) =
+                        results.values().map(|result| result.view_number).max()
+                    {
+                        let sync = inner.sync.lock().unwrap();
+                        for (index, result) in &results {
+                            if result.view_number < latest_view {
+                                inner.transport.do_send(
+                                    sync.membership.get(*index).unwrap(),
+                                    Message::DoViewChange(DoViewChange {
+                                        view_number: latest_view,
+                                        addendum: None,
+                                    }),
+                                )
+                            }
+                        }
+                    }
                     continue;
                 }
 
@@ -205,6 +221,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                         )
                     }),
                     move |results: &HashMap<ReplicaIndex, ReplyConsensus<R>>, timeout: bool| {
+                        println!("{results:?}");
                         // TODO: Liveness
                         get_finalized(results).is_some()
                             || get_quorum(membership_size, results, !timeout).is_some()
@@ -218,6 +235,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone, R: Clone + PartialEq + Deb
                 let sync = inner.sync.lock().unwrap();
                 let membership_size = sync.membership.size();
                 let finalized = get_finalized(&results);
+                println!("checking quorum: {}", finalized.is_some());
                 if finalized.is_none() && let Some((_, result)) = get_quorum(membership_size, &results, true) {
                     // Fast path.
                     for (_, address) in &sync.membership {

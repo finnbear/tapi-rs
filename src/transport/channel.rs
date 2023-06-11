@@ -2,6 +2,7 @@ use rand::{thread_rng, Rng};
 
 use super::{Error, Message};
 use std::future::Future;
+use std::ops::Range;
 use std::sync::{Arc, RwLock};
 
 pub(crate) struct Registry<M> {
@@ -61,7 +62,13 @@ impl<M> Clone for Channel<M> {
 impl<M> Channel<M> {
     fn should_drop(_from: usize, _to: usize) -> bool {
         use rand::Rng;
-        rand::thread_rng().gen_bool(0.1)
+        rand::thread_rng().gen_bool(0.25)
+    }
+
+    fn random_delay(range: Range<u64>) -> impl Future<Output = ()> {
+        tokio::time::sleep(std::time::Duration::from_millis(
+            thread_rng().gen_range(1..5),
+        ))
     }
 }
 
@@ -83,11 +90,9 @@ impl<M: Message> super::Transport for Channel<M> {
         let callback = inner.callbacks.get(address).map(Arc::clone);
         drop(inner);
         let from = self.address;
-        //println!("sending {message:?} from {from} to {address}");
+        println!("{from} sending {message:?} to {address}");
         async move {
-            tokio::time::sleep(std::time::Duration::from_millis(
-                thread_rng().gen_range(1..5),
-            ));
+            Self::random_delay(5..10).await;
             loop {
                 if let Some(callback) = callback.as_ref() {
                     if Self::should_drop(from, address) {
@@ -95,6 +100,7 @@ impl<M: Message> super::Transport for Channel<M> {
                     }
                     let reply = callback(from, message.clone());
                     if let Some(reply) = reply {
+                        println!("{address} replying {reply:?} to {from}");
                         if let Ok(result) = reply.try_into() {
                             if !Self::should_drop(address, from) {
                                 break result;
@@ -106,9 +112,7 @@ impl<M: Message> super::Transport for Channel<M> {
                 } else {
                     println!("unknown address {address:?}");
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(
-                    thread_rng().gen_range(10..15),
-                ));
+                Self::random_delay(25..50).await;
             }
         }
     }
@@ -119,7 +123,7 @@ impl<M: Message> super::Transport for Channel<M> {
         drop(inner);
         let from = self.address;
         let message = message.into();
-        //println!("do-sending {message:?} from {from} to {address}");
+        println!("{from} do-sending {message:?} to {address}");
         if let Some(callback) = callback {
             if !Self::should_drop(self.address, address) {
                 std::thread::spawn(move || {
