@@ -7,16 +7,19 @@ use crate::{
     util::join_until,
     Transport,
 };
+use futures::pin_mut;
 use rand::{thread_rng, Rng};
 use std::{
     collections::HashMap,
     fmt::Debug,
     future::Future,
     marker::PhantomData,
+    pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
+    task::Context,
     time::Duration,
 };
 
@@ -143,6 +146,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
             loop {
                 let sync = inner.sync.lock().unwrap();
                 let membership_size = sync.membership.size();
+                let mut timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
                 let future = join_until(
                     sync.membership.iter().map(|(index, address)| {
                         (
@@ -156,10 +160,14 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                             ),
                         )
                     }),
-                    move |results: &HashMap<ReplicaIndex, ReplyInconsistent>, timeout: bool| {
-                        has_quorum(membership_size, results, !timeout)
+                    move |results: &HashMap<ReplicaIndex, ReplyInconsistent>,
+                          cx: &mut Context<'_>| {
+                        has_quorum(
+                            membership_size,
+                            results,
+                            Future::poll(timeout.as_mut(), cx).is_ready(),
+                        )
                     },
-                    Some(T::sleep(Duration::from_secs(1))),
                 );
                 drop(sync);
 
@@ -233,6 +241,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                 let op_id = OpId { client_id, number };
                 let membership_size = sync.membership.size();
 
+                let mut timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
                 let future = join_until(
                     sync.membership.iter().map(|(index, address)| {
                         (
@@ -246,13 +255,17 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                             ),
                         )
                     }),
-                    move |results: &HashMap<ReplicaIndex, ReplyConsensus<R>>, timeout: bool| {
-                        println!("pending: {results:?}");
+                    move |results: &HashMap<ReplicaIndex, ReplyConsensus<R>>,
+                          cx: &mut Context<'_>| {
                         // TODO: Liveness
                         get_finalized(results).is_some()
-                            || get_quorum(membership_size, results, !timeout).is_some()
+                            || get_quorum(
+                                membership_size,
+                                results,
+                                timeout.as_mut().poll(cx).is_pending(),
+                            )
+                            .is_some()
                     },
-                    Some(T::sleep(Duration::from_secs(1))),
                 );
                 drop(sync);
 
@@ -304,6 +317,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                     }
 
                     // Slow path.
+                    let mut timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
                     let future = join_until(
                         sync.membership.iter().map(|(index, address)| {
                             (
@@ -317,10 +331,9 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                                 ),
                             )
                         }),
-                        |results: &HashMap<ReplicaIndex, Confirm>, timeout: bool| {
-                            get_quorum_view(membership_size, results).is_some() || (timeout && results.len() >= membership_size.f_plus_one())
+                        |results: &HashMap<ReplicaIndex, Confirm>, cx: &mut Context<'_>| {
+                            get_quorum_view(membership_size, results).is_some() || (timeout.as_mut().poll(cx).is_ready() && results.len() >= membership_size.f_plus_one())
                         },
-                        Some(T::sleep(Duration::from_secs(1))),
                     );
                     drop(sync);
                     let results = future.await;
