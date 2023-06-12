@@ -6,7 +6,7 @@ use std::{
     time,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Store<K: Hash + Eq, V, TS: Ord + Eq + Copy> {
     inner: HashMap<K, BTreeMap<TS, (V, Option<TS>)>>,
 }
@@ -101,5 +101,23 @@ impl<K: Hash + Eq, V, TS: Ord + Eq + Copy> Store<K, V, TS> {
             .get(key)
             .and_then(|entries| entries.upper_bound(Bound::Included(&timestamp)).value())
             .and_then(|(_, ts)| *ts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Store;
+
+    #[test]
+    fn simple() {
+        let mut store = Store::default();
+
+        store.put("test1".to_owned(), "abc".to_owned(), 10);
+        assert_eq!(store.get("test1"), Some((10, &String::from("abc"))));
+
+        store.put("test1".to_owned(), "xyz".to_owned(), 11);
+        assert_eq!(store.get("test1"), Some((11, &String::from("xyz"))));
+
+        assert_eq!(store.get_at("test1", 10), Some((10, &String::from("abc"))));
     }
 }
