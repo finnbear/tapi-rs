@@ -2,6 +2,7 @@
 #![feature(return_position_impl_trait_in_trait)]
 #![feature(int_roundings)]
 #![feature(let_chains)]
+#![feature(btree_cursors)]
 #![allow(unused)]
 
 mod ir;
