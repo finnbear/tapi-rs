@@ -6,14 +6,22 @@ use std::{
     time,
 };
 
-#[derive(Debug, Default, Clone)]
-pub(crate) struct Store<K: Hash + Eq, V, TS: Ord + Eq + Copy> {
+#[derive(Debug, Clone)]
+pub(crate) struct Store<K, V, TS> {
     inner: HashMap<K, BTreeMap<TS, (V, Option<TS>)>>,
+}
+
+impl<K, V, TS> Default for Store<K, V, TS> {
+    fn default() -> Self {
+        Self {
+            inner: Default::default(),
+        }
+    }
 }
 
 impl<K: Hash + Eq, V, TS: Ord + Eq + Copy> Store<K, V, TS> {
     /// Get the latest version.
-    fn get<Q: ?Sized + Hash + Eq>(&self, key: &Q) -> Option<(TS, &V)>
+    pub(crate) fn get<Q: ?Sized + Hash + Eq>(&self, key: &Q) -> Option<(TS, &V)>
     where
         K: Borrow<Q>,
     {
@@ -24,7 +32,7 @@ impl<K: Hash + Eq, V, TS: Ord + Eq + Copy> Store<K, V, TS> {
     }
 
     /// Get the version valid at the timestamp.
-    fn get_at<Q: ?Sized + Hash + Eq>(&self, key: &Q, timestamp: TS) -> Option<(TS, &V)>
+    pub(crate) fn get_at<Q: ?Sized + Hash + Eq>(&self, key: &Q, timestamp: TS) -> Option<(TS, &V)>
     where
         K: Borrow<Q>,
     {
@@ -37,7 +45,11 @@ impl<K: Hash + Eq, V, TS: Ord + Eq + Copy> Store<K, V, TS> {
     }
 
     /// Get range from a timestamp to the next timestamp (if any).
-    fn get_range<Q: ?Sized + Hash + Eq>(&self, key: &Q, timestamp: TS) -> Option<(TS, Option<TS>)>
+    pub(crate) fn get_range<Q: ?Sized + Hash + Eq>(
+        &self,
+        key: &Q,
+        timestamp: TS,
+    ) -> Option<(TS, Option<TS>)>
     where
         K: Borrow<Q>,
     {
@@ -56,7 +68,7 @@ impl<K: Hash + Eq, V, TS: Ord + Eq + Copy> Store<K, V, TS> {
     }
 
     /// Install a timestamped version for a key.
-    fn put(&mut self, key: K, value: V, timestamp: TS) {
+    pub(crate) fn put(&mut self, key: K, value: V, timestamp: TS) {
         self.inner
             .entry(key)
             .or_default()
@@ -65,7 +77,7 @@ impl<K: Hash + Eq, V, TS: Ord + Eq + Copy> Store<K, V, TS> {
 
     /// Update the timestamp of the latest read transaction for the
     /// version of the key that the transaction read.
-    fn commit_get<Q: ?Sized + Hash + Eq>(&mut self, key: &Q, read: TS, commit: TS)
+    pub(crate) fn commit_get<Q: ?Sized + Hash + Eq>(&mut self, key: &Q, read: TS, commit: TS)
     where
         K: Borrow<Q>,
     {
@@ -82,7 +94,7 @@ impl<K: Hash + Eq, V, TS: Ord + Eq + Copy> Store<K, V, TS> {
     }
 
     /// Get the last read timestamp of the last version.
-    fn get_last_read<Q: ?Sized + Eq + Hash>(&self, key: &Q) -> Option<TS>
+    pub(crate) fn get_last_read<Q: ?Sized + Eq + Hash>(&self, key: &Q) -> Option<TS>
     where
         K: Borrow<Q>,
     {
@@ -93,7 +105,11 @@ impl<K: Hash + Eq, V, TS: Ord + Eq + Copy> Store<K, V, TS> {
     }
 
     /// Get the last read timestamp of a specific version.
-    fn get_last_read_at<Q: ?Sized + Eq + Hash>(&self, key: &Q, timestamp: TS) -> Option<TS>
+    pub(crate) fn get_last_read_at<Q: ?Sized + Eq + Hash>(
+        &self,
+        key: &Q,
+        timestamp: TS,
+    ) -> Option<TS>
     where
         K: Borrow<Q>,
     {

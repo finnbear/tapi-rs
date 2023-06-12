@@ -1,3 +1,5 @@
-pub(crate) struct Store {
-    linearizable: bool,
-}
+mod store;
+mod transaction;
+
+pub(crate) use store::Store;
+pub(crate) use transaction::Transaction;

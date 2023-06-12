@@ -17,6 +17,8 @@ pub(crate) use ir::{
     RecordEntry as IrRecordEntry, Replica as IrReplica, ReplicaIndex as IrReplicaIndex,
     ReplicaUpcalls as IrReplicaUpcalls,
 };
+pub(crate) use mvcc::Store as MvccStore;
+pub(crate) use occ::Store as OccStore;
 pub(crate) use transport::{
     Channel as ChannelTransport, ChannelRegistry, Error as TransportError,
     Message as TransportMessage, Transport,
