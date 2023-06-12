@@ -1,5 +1,6 @@
 use super::Transaction;
 use crate::MvccStore;
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashSet};
 use std::hash::Hash;
 use std::{borrow::Borrow, collections::HashMap};
@@ -8,6 +9,14 @@ pub(crate) struct Store<K, V, TS> {
     linearizable: bool,
     inner: MvccStore<K, V, TS>,
     prepared: HashMap<u64, (TS, Transaction<K, V, TS>)>,
+}
+
+#[derive(Debug)]
+pub(crate) enum PrepareResult<TS> {
+    Ok,
+    Retry { proposed: TS },
+    Abstain,
+    Fail,
 }
 
 impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
@@ -33,6 +42,35 @@ impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
         self.inner.get_at(key, timestamp)
     }
 
+    pub(crate) fn prepare(
+        &mut self,
+        id: u64,
+        transaction: Transaction<K, V, TS>,
+        commit: TS,
+    ) -> PrepareResult<TS> {
+        if let Entry::Occupied(occupied) = self.prepared.entry(id) {
+            if occupied.get().0 == commit {
+                return PrepareResult::Ok;
+            } else {
+                // Run the checks again for a new timestamp.
+                occupied.remove();
+            }
+        }
+
+        let prepared_reads = self.prepared_reads();
+        let prepared_writes = self.prepared_writes();
+
+        // Check for conflicts with the read set.
+        for (key, read) in &transaction.read_set {
+            // If we don't have this key then no conflicts for read.
+            let Some((beginning, end)) = self.inner.get_range(key, *read) else {
+                continue;
+            };
+        }
+
+        PrepareResult::Ok
+    }
+
     pub(crate) fn commit(&mut self, id: u64) {
         let Some((commit, transaction)) = self.prepared.remove(&id) else {
             return;
@@ -55,7 +93,7 @@ impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
         self.inner.put(key, value, timestamp);
     }
 
-    pub(crate) fn get_prepared_reads(&self) -> HashMap<&K, BTreeSet<TS>> {
+    pub(crate) fn prepared_reads(&self) -> HashMap<&K, BTreeSet<TS>> {
         let mut ret: HashMap<&K, BTreeSet<TS>> = HashMap::default();
         for (_, (timestamp, transaction)) in &self.prepared {
             for key in transaction.read_set.keys() {
@@ -65,7 +103,7 @@ impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
         ret
     }
 
-    pub(crate) fn get_prepared_writes(&self) -> HashMap<&K, BTreeSet<TS>> {
+    pub(crate) fn prepared_writes(&self) -> HashMap<&K, BTreeSet<TS>> {
         let mut ret: HashMap<&K, BTreeSet<TS>> = HashMap::default();
         for (_, (timestamp, transaction)) in &self.prepared {
             for key in transaction.write_set.keys() {
