@@ -1,5 +1,6 @@
 use super::Transaction;
 use crate::MvccStore;
+use std::collections::{BTreeSet, HashSet};
 use std::hash::Hash;
 use std::{borrow::Borrow, collections::HashMap};
 
@@ -44,5 +45,33 @@ impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
         for (key, value) in transaction.write_set {
             self.inner.put(key, value, commit);
         }
+    }
+
+    pub(crate) fn abort(&mut self, id: u64) {
+        self.prepared.remove(&id);
+    }
+
+    pub(crate) fn put(&mut self, key: K, value: V, timestamp: TS) {
+        self.inner.put(key, value, timestamp);
+    }
+
+    pub(crate) fn get_prepared_reads(&self) -> HashMap<&K, BTreeSet<TS>> {
+        let mut ret: HashMap<&K, BTreeSet<TS>> = HashMap::default();
+        for (_, (timestamp, transaction)) in &self.prepared {
+            for key in transaction.read_set.keys() {
+                ret.entry(key).or_default().insert(*timestamp);
+            }
+        }
+        ret
+    }
+
+    pub(crate) fn get_prepared_writes(&self) -> HashMap<&K, BTreeSet<TS>> {
+        let mut ret: HashMap<&K, BTreeSet<TS>> = HashMap::default();
+        for (_, (timestamp, transaction)) in &self.prepared {
+            for key in transaction.write_set.keys() {
+                ret.entry(key).or_default().insert(*timestamp);
+            }
+        }
+        ret
     }
 }
