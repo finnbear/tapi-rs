@@ -241,7 +241,8 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                 let op_id = OpId { client_id, number };
                 let membership_size = sync.membership.size();
 
-                let mut timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
+                let mut soft_timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
+                let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_secs(3)));
                 let future = join_until(
                     sync.membership.iter().map(|(index, address)| {
                         (
@@ -257,14 +258,14 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                     }),
                     move |results: &HashMap<ReplicaIndex, ReplyConsensus<R>>,
                           cx: &mut Context<'_>| {
-                        // TODO: Liveness
                         get_finalized(results).is_some()
                             || get_quorum(
                                 membership_size,
                                 results,
-                                timeout.as_mut().poll(cx).is_pending(),
+                                soft_timeout.as_mut().poll(cx).is_pending(),
                             )
                             .is_some()
+                            || hard_timeout.as_mut().poll(cx).is_ready()
                     },
                 );
                 drop(sync);
