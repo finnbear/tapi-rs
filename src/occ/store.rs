@@ -12,7 +12,7 @@ pub(crate) struct Store<K, V, TS> {
     prepared: HashMap<u64, (TS, Transaction<K, V, TS>)>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum PrepareResult<TS> {
     Ok,
     Retry { proposed: TS },

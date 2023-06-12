@@ -2,7 +2,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::hash::Hash;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Transaction<K, V, TS> {
     pub(crate) read_set: HashMap<K, TS>,
     pub(crate) write_set: HashMap<K, V>,

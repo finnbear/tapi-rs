@@ -8,6 +8,7 @@
 mod ir;
 mod mvcc;
 mod occ;
+mod tapir;
 mod transport;
 pub(crate) mod util;
 
@@ -18,7 +19,9 @@ pub(crate) use ir::{
     ReplicaUpcalls as IrReplicaUpcalls,
 };
 pub(crate) use mvcc::Store as MvccStore;
-pub(crate) use occ::Store as OccStore;
+pub(crate) use occ::{
+    PrepareResult as OccPrepareResult, Store as OccStore, Transaction as OccTransaction,
+};
 pub(crate) use transport::{
     Channel as ChannelTransport, ChannelRegistry, Error as TransportError,
     Message as TransportMessage, Transport,
