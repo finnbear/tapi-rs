@@ -1,6 +1,7 @@
 use crate::{
-    ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMessage, IrOpId,
-    IrRecord, IrRecordEntry, IrReplica, IrReplicaIndex, IrReplicaUpcalls, Transport,
+    ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
+    IrMessage, IrOpId, IrRecord, IrRecordEntry, IrReplica, IrReplicaIndex, IrReplicaUpcalls,
+    Transport,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -168,10 +169,10 @@ async fn lock_server(num_replicas: usize) {
         .map(|_| create_client(&registry, &membership))
         .collect::<Vec<_>>();
 
-    let decide_lock = |results: Vec<Res>| {
+    let decide_lock = |results: Vec<Res>, membership: IrMembershipSize| {
         let ok = results.iter().filter(|&r| r == &Res::Ok).count();
         //println!("deciding {ok} of {} : {results:?}", results.len());
-        if ok >= (num_replicas - 1) / 2 + 1 {
+        if ok >= membership.f_plus_one() {
             Res::Ok
         } else {
             Res::No
@@ -197,7 +198,7 @@ async fn lock_server(num_replicas: usize) {
         .invoke_inconsistent(Op::Unlock(clients[0].id()))
         .await;
 
-    for i in 0..3 {
+    for i in 0..5 {
         ChannelTransport::<Message>::sleep(Duration::from_secs(8)).await;
 
         println!("@@@@@ INVOKE {replicas:?}");

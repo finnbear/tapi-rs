@@ -197,7 +197,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
     pub(crate) fn invoke_consensus(
         &self,
         op: O,
-        decide: impl Fn(Vec<R>) -> R,
+        decide: impl Fn(Vec<R>, MembershipSize) -> R,
     ) -> impl Future<Output = R> {
         fn get_finalized<R>(replies: &HashMap<ReplicaIndex, ReplyConsensus<R>>) -> Option<&R> {
             replies
@@ -302,6 +302,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                                 .filter(|rc| rc.view_number == view_number)
                                 .map(|rc| rc.result)
                                 .collect::<Vec<_>>(),
+                                membership_size
                         ), Some(view_number))
                     })
                 }) {
