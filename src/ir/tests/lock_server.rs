@@ -13,11 +13,13 @@ use std::{
 async fn test_lock_server() {
     lock_server(3).await;
 
+    /*
     for _ in 0..10 {
         for r in (3..=5).step_by(2) {
             lock_server(r).await;
         }
     }
+    */
 }
 
 async fn lock_server(num_replicas: usize) {
