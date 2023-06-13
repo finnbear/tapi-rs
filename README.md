@@ -24,6 +24,7 @@ Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-
   - [ ] Cooperative termination
   - [ ] Garbage collection of OCC versions
   - [ ] Persistent storage (e.g. `sled`)
+  - [ ] Pessimistic read only transactions
 - [ ] Planned extensions
   - [ ] Quorum range scan
   - [ ] Automatic shard balancing
