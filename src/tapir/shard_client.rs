@@ -1,7 +1,7 @@
 use super::{Reply, Request, Timestamp};
 use crate::{
-    transport::Transport, IrClient, IrMembership, IrMessage, IrReplicaIndex, OccTransaction,
-    OccTransactionId,
+    transport::Transport, IrClient, IrMembership, IrMessage, IrReplicaIndex, OccPrepareResult,
+    OccTransaction, OccTransactionId,
 };
 use std::{
     collections::HashMap,
@@ -129,7 +129,32 @@ impl<
                 let mut ok_count = 0;
                 let mut timestamp = 0u64;
 
-                todo!();
+                for (reply, count) in results {
+                    let Reply::Prepare(reply) = reply else {
+                        panic!();
+                    };
+
+                    match reply {
+                        OccPrepareResult::Ok => {
+                            ok_count += count;
+                        }
+                        OccPrepareResult::Retry { proposed } => {
+                            timestamp = timestamp.max(proposed);
+                        }
+                        OccPrepareResult::Abstain => {}
+                        OccPrepareResult::Fail => {
+                            return Reply::Prepare(OccPrepareResult::Fail);
+                        }
+                    }
+                }
+
+                Reply::Prepare(if ok_count >= membership_size.f_plus_one() {
+                    OccPrepareResult::Ok
+                } else {
+                    OccPrepareResult::Retry {
+                        proposed: timestamp,
+                    }
+                })
             },
         );
         std::future::ready(todo!())
