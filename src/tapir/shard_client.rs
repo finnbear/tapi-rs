@@ -116,10 +116,10 @@ impl<
         &self,
         transaction_id: OccTransactionId,
         timestamp: Timestamp,
-    ) -> impl Future<Output = bool> {
+    ) -> impl Future<Output = OccPrepareResult<Timestamp>> {
         let transaction = self.transaction.as_ref().unwrap();
         let mut lock = transaction.lock().unwrap();
-        self.inner.invoke_consensus(
+        let future = self.inner.invoke_consensus(
             Request::Prepare {
                 transaction_id: lock.id,
                 transaction: lock.inner.clone(),
@@ -157,14 +157,34 @@ impl<
                 })
             },
         );
-        std::future::ready(todo!())
+        drop(lock);
+
+        async move {
+            let reply = future.await;
+            let Reply::Prepare(result) = reply else {
+                unreachable!();
+            };
+            result
+        }
     }
 
-    pub(crate) fn commit(&self, transaction_id: OccTransactionId) -> impl Future<Output = ()> {
-        std::future::ready(todo!())
-    }
-
-    pub(crate) fn abort(&self, transaction_id: OccTransactionId) -> impl Future<Output = ()> {
-        std::future::ready(todo!())
+    pub(crate) fn end(
+        &self,
+        transaction_id: OccTransactionId,
+        commit: bool,
+    ) -> impl Future<Output = ()> {
+        let transaction: &Arc<Mutex<Transaction<K, V>>> = self.transaction.as_ref().unwrap();
+        let mut lock = transaction.lock().unwrap();
+        let future = self.inner.invoke_inconsistent(if commit {
+            Request::Commit {
+                transaction_id: lock.id,
+            }
+        } else {
+            Request::Abort {
+                transaction_id: lock.id,
+            }
+        });
+        drop(lock);
+        future
     }
 }
