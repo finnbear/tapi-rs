@@ -20,7 +20,7 @@ pub(crate) enum PrepareResult<TS: Timestamp> {
     Fail,
 }
 
-impl<K: Eq + Hash + Clone, V, TS: Timestamp> Store<K, V, TS> {
+impl<K, V, TS> Store<K, V, TS> {
     pub(crate) fn new(linearizable: bool) -> Self {
         Self {
             linearizable,
@@ -28,7 +28,9 @@ impl<K: Eq + Hash + Clone, V, TS: Timestamp> Store<K, V, TS> {
             prepared: Default::default(),
         }
     }
+}
 
+impl<K: Eq + Hash + Clone, V, TS: Timestamp> Store<K, V, TS> {
     pub(crate) fn get<Q: ?Sized + Eq + Hash>(&self, key: &Q) -> (Option<&V>, TS)
     where
         K: Borrow<Q>,

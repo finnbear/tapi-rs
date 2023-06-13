@@ -48,6 +48,15 @@ pub(crate) struct ShardTransaction<K, V, T: Transport> {
     inner: Arc<Mutex<Inner<K, V>>>,
 }
 
+impl<K, V, T: Transport> Clone for ShardTransaction<K, V, T> {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
 struct Inner<K, V> {
     id: OccTransactionId,
     inner: OccTransaction<K, V, Timestamp>,
@@ -182,11 +191,7 @@ impl<
         }
     }
 
-    pub(crate) fn end(
-        &self,
-        transaction_id: OccTransactionId,
-        commit: bool,
-    ) -> impl Future<Output = ()> {
+    pub(crate) fn end(&self, commit: bool) -> impl Future<Output = ()> {
         let mut lock = self.inner.lock().unwrap();
         let future = self.client.invoke_inconsistent(if commit {
             Request::Commit {

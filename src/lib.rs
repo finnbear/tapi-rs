@@ -23,6 +23,9 @@ pub(crate) use occ::{
     PrepareResult as OccPrepareResult, Store as OccStore, Timestamp as OccTimestamp,
     Transaction as OccTransaction, TransactionId as OccTransactionId,
 };
+pub(crate) use tapir::{
+    Client as TapirClient, Replica as TapirReplica, Reply as TapirReply, Request as TapirRequest,
+};
 pub(crate) use transport::{
     Channel as ChannelTransport, ChannelRegistry, Error as TransportError,
     Message as TransportMessage, Transport,

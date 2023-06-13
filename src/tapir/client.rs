@@ -13,6 +13,7 @@ use std::{
 pub(crate) struct Client<K, V, T: Transport> {
     /// TODO: Add multiple shards.
     inner: ShardClient<K, V, T>,
+    transport: T,
     next_transaction_number: AtomicU64,
 }
 
@@ -28,14 +29,15 @@ impl<
         T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
     > Client<K, V, T>
 {
-    fn new(membership: IrMembership<T>, transport: T) -> Self {
+    pub(crate) fn new(membership: IrMembership<T>, transport: T) -> Self {
         Self {
-            inner: ShardClient::new(membership, transport),
+            inner: ShardClient::new(membership, transport.clone()),
+            transport,
             next_transaction_number: AtomicU64::new(thread_rng().gen()),
         }
     }
 
-    fn begin(&self) -> Transaction<K, V, T> {
+    pub(crate) fn begin(&self) -> Transaction<K, V, T> {
         let transaction_id = OccTransactionId {
             client_id: self.inner.id(),
             number: self.next_transaction_number.fetch_add(1, Ordering::Relaxed),
@@ -62,19 +64,23 @@ impl<
     }
 
     pub(crate) fn commit(&self) -> impl Future<Output = bool> {
+        let inner = self.inner.clone();
         let time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let future = self.inner.prepare(Timestamp {
+        let future = inner.prepare(Timestamp {
             time,
             client_id: self.inner.client.id(),
         });
 
         async move {
             let result = future.await;
+            println!("COMMITTING {:?}", result);
             // TODO: retries.
-            matches!(result, OccPrepareResult::Ok)
+            let ok = matches!(result, OccPrepareResult::Ok);
+            inner.end(ok).await;
+            ok
         }
     }
 }

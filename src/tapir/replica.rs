@@ -3,8 +3,16 @@ use std::{fmt::Debug, hash::Hash};
 use super::{Reply, Request, Timestamp};
 use crate::{IrReplicaUpcalls, OccStore};
 
-struct Replica<K, V> {
+pub(crate) struct Replica<K, V> {
     inner: OccStore<K, V, Timestamp>,
+}
+
+impl<K, V> Replica<K, V> {
+    pub(crate) fn new(linearizable: bool) -> Self {
+        Self {
+            inner: OccStore::new(linearizable),
+        }
+    }
 }
 
 impl<
