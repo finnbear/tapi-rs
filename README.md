@@ -11,6 +11,7 @@ Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-
   - [x] Recovery
   - [ ] Epoch changes
   - [ ] Garbage collection of log
+  - [ ] Real network transport
 - [ ] TAPIR
   - [x] Get
   - [x] Put
