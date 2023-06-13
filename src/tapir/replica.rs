@@ -21,14 +21,14 @@ impl<
                 transaction_id,
                 key,
                 timestamp,
-            } => Reply::Get(
-                if let Some(timestamp) = timestamp {
+            } => {
+                let (v, ts) = if let Some(timestamp) = timestamp {
                     self.inner.get_at(&key, timestamp)
                 } else {
                     self.inner.get(&key)
-                }
-                .map(|(ts, v)| (v.clone(), ts)),
-            ),
+                };
+                Reply::Get(v.cloned(), ts)
+            }
             _ => unreachable!(),
         }
     }

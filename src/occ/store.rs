@@ -1,4 +1,4 @@
-use super::Transaction;
+use super::{Transaction, TransactionId};
 use crate::MvccStore;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -9,7 +9,7 @@ use std::{borrow::Borrow, collections::HashMap};
 pub(crate) struct Store<K, V, TS> {
     linearizable: bool,
     inner: MvccStore<K, V, TS>,
-    prepared: HashMap<u64, (TS, Transaction<K, V, TS>)>,
+    prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>)>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -20,7 +20,7 @@ pub(crate) enum PrepareResult<TS> {
     Fail,
 }
 
-impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
+impl<K: Eq + Hash + Clone, V, TS: Copy + Ord + Default> Store<K, V, TS> {
     pub(crate) fn new(linearizable: bool) -> Self {
         Self {
             linearizable,
@@ -29,14 +29,14 @@ impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
         }
     }
 
-    pub(crate) fn get<Q: ?Sized + Eq + Hash>(&self, key: &Q) -> Option<(TS, &V)>
+    pub(crate) fn get<Q: ?Sized + Eq + Hash>(&self, key: &Q) -> (Option<&V>, TS)
     where
         K: Borrow<Q>,
     {
         self.inner.get(key)
     }
 
-    pub(crate) fn get_at<Q: ?Sized + Eq + Hash>(&self, key: &Q, timestamp: TS) -> Option<(TS, &V)>
+    pub(crate) fn get_at<Q: ?Sized + Eq + Hash>(&self, key: &Q, timestamp: TS) -> (Option<&V>, TS)
     where
         K: Borrow<Q>,
     {
@@ -45,7 +45,7 @@ impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
 
     pub(crate) fn prepare(
         &mut self,
-        id: u64,
+        id: TransactionId,
         transaction: Transaction<K, V, TS>,
         commit: TS,
     ) -> PrepareResult<TS> {
@@ -64,9 +64,7 @@ impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
         // Check for conflicts with the read set.
         for (key, read) in &transaction.read_set {
             // If we don't have this key then no conflicts for read.
-            let Some((beginning, end)) = self.inner.get_range(key, *read) else {
-                continue;
-            };
+            let (beginning, end) = self.inner.get_range(key, *read);
 
             // If we don't have this version then no conflicts for read.
             if beginning != *read {
@@ -101,7 +99,8 @@ impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
 
         // Check for conflicts with the write set.
         for (key, write) in &transaction.write_set {
-            if let Some((timestamp, _)) = self.inner.get(key) {
+            {
+                let (_, timestamp) = self.inner.get(key);
                 // If the last commited write is after the write...
                 if self.linearizable && timestamp > commit {
                     // ...then the write isn't linearizable.
@@ -145,13 +144,13 @@ impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
         PrepareResult::Ok
     }
 
-    pub(crate) fn commit(&mut self, id: u64) {
+    pub(crate) fn commit(&mut self, id: TransactionId) {
         let Some((commit, transaction)) = self.prepared.remove(&id) else {
             return;
         };
 
         for (key, read) in transaction.read_set {
-            self.inner.commit_get(&key, read, commit);
+            self.inner.commit_get(key.clone(), read, commit);
         }
 
         for (key, value) in transaction.write_set {
@@ -159,11 +158,11 @@ impl<K: Eq + Hash, V, TS: Copy + Ord> Store<K, V, TS> {
         }
     }
 
-    pub(crate) fn abort(&mut self, id: u64) {
+    pub(crate) fn abort(&mut self, id: TransactionId) {
         self.prepared.remove(&id);
     }
 
-    pub(crate) fn put(&mut self, key: K, value: V, timestamp: TS) {
+    pub(crate) fn put(&mut self, key: K, value: Option<V>, timestamp: TS) {
         self.inner.put(key, value, timestamp);
     }
 

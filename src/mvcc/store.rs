@@ -8,7 +8,12 @@ use std::{
 
 #[derive(Debug, Clone)]
 pub(crate) struct Store<K, V, TS> {
-    inner: HashMap<K, BTreeMap<TS, (V, Option<TS>)>>,
+    /// For each timestamped version of a key, track the
+    /// value (or tombstone) and the optional read timestamp.
+    ///
+    /// For all keys, there is an implicit version (TS::default() => (None, None)),
+    /// in other words the key was nonexistent at the beginning of time.
+    inner: HashMap<K, BTreeMap<TS, (Option<V>, Option<TS>)>>,
 }
 
 impl<K, V, TS> Default for Store<K, V, TS> {
@@ -19,29 +24,33 @@ impl<K, V, TS> Default for Store<K, V, TS> {
     }
 }
 
-impl<K: Hash + Eq, V, TS: Ord + Eq + Copy> Store<K, V, TS> {
+impl<K: Hash + Eq, V, TS: Ord + Eq + Copy + Default> Store<K, V, TS> {
     /// Get the latest version.
-    pub(crate) fn get<Q: ?Sized + Hash + Eq>(&self, key: &Q) -> Option<(TS, &V)>
+    pub(crate) fn get<Q: ?Sized + Hash + Eq>(&self, key: &Q) -> (Option<&V>, TS)
     where
         K: Borrow<Q>,
     {
         self.inner
             .get(key)
             .and_then(|versions| versions.last_key_value())
-            .map(|(k, (v, _))| (*k, v))
+            .map(|(ts, (v, _))| (v.as_ref(), *ts))
+            .unwrap_or_default()
     }
 
     /// Get the version valid at the timestamp.
-    pub(crate) fn get_at<Q: ?Sized + Hash + Eq>(&self, key: &Q, timestamp: TS) -> Option<(TS, &V)>
+    pub(crate) fn get_at<Q: ?Sized + Hash + Eq>(&self, key: &Q, timestamp: TS) -> (Option<&V>, TS)
     where
         K: Borrow<Q>,
     {
-        self.inner.get(key).and_then(|versions| {
-            versions
-                .upper_bound(Bound::Included(&timestamp))
-                .key_value()
-                .map(|(t, (v, _))| (*t, v))
-        })
+        self.inner
+            .get(key)
+            .and_then(|versions| {
+                versions
+                    .upper_bound(Bound::Included(&timestamp))
+                    .key_value()
+            })
+            .map(|(ts, (v, _))| (v.as_ref(), *ts))
+            .unwrap_or_default()
     }
 
     /// Get range from a timestamp to the next timestamp (if any).
@@ -49,26 +58,30 @@ impl<K: Hash + Eq, V, TS: Ord + Eq + Copy> Store<K, V, TS> {
         &self,
         key: &Q,
         timestamp: TS,
-    ) -> Option<(TS, Option<TS>)>
+    ) -> (TS, Option<TS>)
     where
         K: Borrow<Q>,
     {
-        self.inner.get(key).and_then(|versions| {
-            let mut cursor = versions.upper_bound(Bound::Included(&timestamp));
-            if let Some((fk, _)) = cursor.key_value() {
-                if let Some((lk, _)) = cursor.peek_next() {
-                    Some((*fk, Some(*lk)))
+        self.inner
+            .get(key)
+            .and_then(|versions| {
+                let mut cursor = versions.upper_bound(Bound::Included(&timestamp));
+                if let Some((fk, _)) = cursor.key_value() {
+                    if let Some((lk, _)) = cursor.peek_next() {
+                        Some((*fk, Some(*lk)))
+                    } else {
+                        Some((*fk, None))
+                    }
                 } else {
-                    Some((*fk, None))
+                    None
                 }
-            } else {
-                None
-            }
-        })
+            })
+            .unwrap_or_default()
     }
 
     /// Install a timestamped version for a key.
-    pub(crate) fn put(&mut self, key: K, value: V, timestamp: TS) {
+    pub(crate) fn put(&mut self, key: K, value: Option<V>, timestamp: TS) {
+        debug_assert!(timestamp > TS::default());
         self.inner
             .entry(key)
             .or_default()
@@ -77,19 +90,17 @@ impl<K: Hash + Eq, V, TS: Ord + Eq + Copy> Store<K, V, TS> {
 
     /// Update the timestamp of the latest read transaction for the
     /// version of the key that the transaction read.
-    pub(crate) fn commit_get<Q: ?Sized + Hash + Eq>(&mut self, key: &Q, read: TS, commit: TS)
-    where
-        K: Borrow<Q>,
-    {
-        if let Some(versions) = self.inner.get_mut(key) {
-            if let Some((_, version)) = versions.upper_bound_mut(Bound::Included(&read)).value_mut()
-            {
-                *version = Some(if let Some(version) = *version {
-                    version.max(commit)
-                } else {
-                    commit
-                });
-            }
+    pub(crate) fn commit_get(&mut self, key: K, read: TS, commit: TS) {
+        let versions = self.inner.entry(key).or_default();
+        if let Some((_, version)) = versions.upper_bound_mut(Bound::Included(&read)).value_mut() {
+            *version = Some(if let Some(version) = *version {
+                version.max(commit)
+            } else {
+                commit
+            });
+        } else {
+            // Make the implicit version explicit.
+            versions.insert(TS::default(), (None, Some(commit)));
         }
     }
 
@@ -127,13 +138,14 @@ mod tests {
     #[test]
     fn simple() {
         let mut store = Store::default();
+        assert_eq!(store.get("test1"), (None, 0));
 
-        store.put("test1".to_owned(), "abc".to_owned(), 10);
-        assert_eq!(store.get("test1"), Some((10, &String::from("abc"))));
+        store.put("test1".to_owned(), Some("abc".to_owned()), 10);
+        assert_eq!(store.get("test1"), (Some(&String::from("abc")), 10));
 
-        store.put("test1".to_owned(), "xyz".to_owned(), 11);
-        assert_eq!(store.get("test1"), Some((11, &String::from("xyz"))));
+        store.put("test1".to_owned(), Some("xyz".to_owned()), 11);
+        assert_eq!(store.get("test1"), (Some(&String::from("xyz")), 11));
 
-        assert_eq!(store.get_at("test1", 10), Some((10, &String::from("abc"))));
+        assert_eq!(store.get_at("test1", 10), (Some(&String::from("abc")), 10));
     }
 }

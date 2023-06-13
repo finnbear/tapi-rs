@@ -1,6 +1,7 @@
 use super::{
     DoViewChange, FinalizeInconsistent, Membership, MembershipSize, Message, OpId,
-    ProposeConsensus, ProposeInconsistent, ReplicaIndex, ViewChangeAddendum, ViewNumber,
+    ProposeConsensus, ProposeInconsistent, ReplicaIndex, ReplyUnlogged, RequestUnlogged,
+    ViewChangeAddendum, ViewNumber,
 };
 use crate::{
     ir::{membership, Confirm, FinalizeConsensus, Replica, ReplyConsensus, ReplyInconsistent},
@@ -43,10 +44,20 @@ impl Debug for Id {
     }
 }
 
-pub(crate) struct Client<T: Transport<Message = Message<O, R>>, O, R> {
+pub(crate) struct Client<T: Transport, O, R> {
     id: Id,
     inner: Arc<Inner<T>>,
     _spooky: PhantomData<(O, R)>,
+}
+
+impl<T: Transport, O, R> Clone for Client<T, O, R> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            inner: Arc::clone(&self.inner),
+            _spooky: PhantomData,
+        }
+    }
 }
 
 struct Inner<T: Transport> {
@@ -108,6 +119,19 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
         }
     }
 
+    pub(crate) fn invoke_unlogged(&self, index: ReplicaIndex, op: O) -> impl Future<Output = R> {
+        let sync = self.inner.sync.lock().unwrap();
+        let address = sync.membership.get(index).unwrap();
+        drop(sync);
+
+        let future = self
+            .inner
+            .transport
+            .send::<ReplyUnlogged<R>>(address, RequestUnlogged { op: op.clone() });
+
+        async move { future.await.result }
+    }
+
     pub(crate) fn invoke_inconsistent(&self, op: O) -> impl Future<Output = ()> {
         let client_id = self.id;
         let inner = Arc::clone(&self.inner);
@@ -151,7 +175,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                     sync.membership.iter().map(|(index, address)| {
                         (
                             index,
-                            inner.transport.send(
+                            inner.transport.send::<ReplyInconsistent>(
                                 address,
                                 ProposeInconsistent {
                                     op_id,
