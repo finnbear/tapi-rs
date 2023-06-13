@@ -44,13 +44,6 @@ impl<K: Eq + Hash, V, TS> Transaction<K, V, TS> {
     }
 
     pub(crate) fn add_write(&mut self, key: K, value: Option<V>) {
-        match self.write_set.entry(key) {
-            Entry::Vacant(vacant) => {
-                vacant.insert(value);
-            }
-            Entry::Occupied(occupied) => {
-                panic!();
-            }
-        }
+        self.write_set.insert(key, value);
     }
 }

@@ -1,4 +1,4 @@
-use crate::IrClientId;
+use crate::{IrClientId, OccTimestamp};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) struct Timestamp {
@@ -12,5 +12,13 @@ impl Default for Timestamp {
             time: 0,
             client_id: IrClientId(0),
         }
+    }
+}
+
+impl OccTimestamp for Timestamp {
+    type Time = u64;
+
+    fn time(&self) -> Self::Time {
+        self.time
     }
 }

@@ -106,20 +106,32 @@ impl<
         }
     }
 
-    pub(crate) fn put(
-        &self,
-        transaction_id: OccTransactionId,
-        key: K,
-        value: V,
-    ) -> impl Future<Output = ()> {
-        std::future::ready(todo!())
+    pub(crate) fn put(&self, transaction_id: OccTransactionId, key: K, value: Option<V>) {
+        let transaction = self.transaction.as_ref().unwrap();
+        let mut lock = transaction.lock().unwrap();
+        lock.inner.add_write(key, value);
     }
 
     pub(crate) fn prepare(
         &self,
         transaction_id: OccTransactionId,
-        timestamp: Option<Timestamp>,
+        timestamp: Timestamp,
     ) -> impl Future<Output = bool> {
+        let transaction = self.transaction.as_ref().unwrap();
+        let mut lock = transaction.lock().unwrap();
+        self.inner.invoke_consensus(
+            Request::Prepare {
+                transaction_id: lock.id,
+                transaction: lock.inner.clone(),
+                commit: timestamp,
+            },
+            |results, membership_size| {
+                let mut ok_count = 0;
+                let mut timestamp = 0u64;
+
+                todo!();
+            },
+        );
         std::future::ready(todo!())
     }
 

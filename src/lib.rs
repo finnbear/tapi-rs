@@ -20,8 +20,8 @@ pub(crate) use ir::{
 };
 pub(crate) use mvcc::Store as MvccStore;
 pub(crate) use occ::{
-    PrepareResult as OccPrepareResult, Store as OccStore, Transaction as OccTransaction,
-    TransactionId as OccTransactionId,
+    PrepareResult as OccPrepareResult, Store as OccStore, Timestamp as OccTimestamp,
+    Transaction as OccTransaction, TransactionId as OccTransactionId,
 };
 pub(crate) use transport::{
     Channel as ChannelTransport, ChannelRegistry, Error as TransportError,

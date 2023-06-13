@@ -1,4 +1,4 @@
-use super::{Transaction, TransactionId};
+use super::{Timestamp, Transaction, TransactionId};
 use crate::MvccStore;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -13,14 +13,14 @@ pub(crate) struct Store<K, V, TS> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) enum PrepareResult<TS> {
+pub(crate) enum PrepareResult<TS: Timestamp> {
     Ok,
-    Retry { proposed: TS },
+    Retry { proposed: TS::Time },
     Abstain,
     Fail,
 }
 
-impl<K: Eq + Hash + Clone, V, TS: Copy + Ord + Default> Store<K, V, TS> {
+impl<K: Eq + Hash + Clone, V, TS: Timestamp> Store<K, V, TS> {
     pub(crate) fn new(linearizable: bool) -> Self {
         Self {
             linearizable,
@@ -105,7 +105,7 @@ impl<K: Eq + Hash + Clone, V, TS: Copy + Ord + Default> Store<K, V, TS> {
                 if self.linearizable && timestamp > commit {
                     // ...then the write isn't linearizable.
                     return PrepareResult::Retry {
-                        proposed: timestamp,
+                        proposed: timestamp.time(),
                     };
                 }
 
@@ -120,14 +120,14 @@ impl<K: Eq + Hash + Clone, V, TS: Copy + Ord + Default> Store<K, V, TS> {
 
                 if let Some(last_read) = last_read && last_read > commit {
                     // Write conflicts with a later committed read.
-                    return PrepareResult::Retry{proposed: last_read};
+                    return PrepareResult::Retry{proposed: last_read.time()};
                 }
             }
 
             if self.linearizable && let Some(writes) = prepared_writes.get(key) {
                 if let Some(write) = writes.lower_bound(Bound::Excluded(&commit)).key() {
                     // Write conflicts with later prepared write.
-                    return PrepareResult::Retry { proposed: *write };
+                    return PrepareResult::Retry { proposed: write.time() };
                 }
             }
 
