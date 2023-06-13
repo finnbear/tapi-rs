@@ -2,19 +2,27 @@
 
 Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-v2.pdf)
 
+- [x] Safe, `async` Rust
 - [ ] IR
   - [x] Unlogged
   - [x] Inconsistent
   - [x] Consensus
   - [x] View changes
+  - [x] Recovery
   - [ ] Epoch changes
   - [ ] Garbage collection of log
 - [ ] TAPIR
+  - [x] Get
+  - [x] Put
+  - [x] Prepare
+  - [x] Commit
+  - [x] Abort
   - [x] Optional linearizability
-  - [ ] Sync & merge
+  - [ ] IR Sync & merge
   - [ ] Sharding
   - [ ] Cooperative termination
   - [ ] Garbage collection of OCC versions
+  - [ ] Persistent storage (e.g. `sled`)
 - [ ] Testing
   - [x] IR lock server (very simple)
   - [x] TAPIR-KV (very simple)
