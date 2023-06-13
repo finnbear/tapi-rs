@@ -26,6 +26,7 @@ Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-
   - [ ] Persistent storage (e.g. `sled`)
   - [ ] Pessimistic read only transactions
 - [ ] Planned extensions
+  - [x] Delete key operation
   - [ ] Quorum range scan
   - [ ] Automatic shard balancing
 - [ ] Testing
