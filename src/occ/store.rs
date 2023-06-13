@@ -12,7 +12,7 @@ pub(crate) struct Store<K, V, TS> {
     prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>)>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub(crate) enum PrepareResult<TS: Timestamp> {
     Ok,
     Retry { proposed: TS::Time },

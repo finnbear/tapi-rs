@@ -1,6 +1,6 @@
 use crate::{IrClientId, OccTimestamp};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(crate) struct Timestamp {
     pub(crate) time: u64,
     pub(crate) client_id: IrClientId,

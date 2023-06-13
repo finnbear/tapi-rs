@@ -14,6 +14,7 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     future::Future,
+    hash::Hash,
     marker::PhantomData,
     pin::Pin,
     sync::{
@@ -78,7 +79,7 @@ impl<T: Transport> SyncInner<T> {
     }
 }
 
-impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + PartialEq + Debug>
+impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Eq + Hash + Debug>
     Client<T, O, R>
 {
     pub(crate) fn new(membership: Membership<T>, transport: T) -> Self {
@@ -221,7 +222,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
     pub(crate) fn invoke_consensus(
         &self,
         op: O,
-        decide: impl Fn(Vec<R>, MembershipSize) -> R,
+        decide: impl Fn(HashMap<R, usize>, MembershipSize) -> R,
     ) -> impl Future<Output = R> {
         fn get_finalized<R>(replies: &HashMap<ReplicaIndex, ReplyConsensus<R>>) -> Option<&R> {
             replies
@@ -321,12 +322,16 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Partial
                 } else if let Some((result, reply_consensus_view)) = finalized.map(|f| (f.clone(), None)).or_else(|| {
                     let view_number = get_quorum(membership_size, &results, false).map(|(v, _)| v);
                     view_number.map(|view_number| {
+                        let results = results
+                            .into_values()
+                            .filter(|rc| rc.view_number == view_number)
+                            .map(|rc| rc.result);
+                        let mut totals = HashMap::new();
+                        for result in results {
+                            *totals.entry(result).or_default() += 1;
+                        }
                         (decide(
-                            results
-                                .into_values()
-                                .filter(|rc| rc.view_number == view_number)
-                                .map(|rc| rc.result)
-                                .collect::<Vec<_>>(),
+                                totals,
                                 membership_size
                         ), Some(view_number))
                     })

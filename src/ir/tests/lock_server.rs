@@ -27,7 +27,7 @@ async fn lock_server(num_replicas: usize) {
         Unlock(IrClientId),
     }
 
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
     enum Res {
         Ok,
         No,
@@ -169,10 +169,9 @@ async fn lock_server(num_replicas: usize) {
         .map(|_| create_client(&registry, &membership))
         .collect::<Vec<_>>();
 
-    let decide_lock = |results: Vec<Res>, membership: IrMembershipSize| {
-        let ok = results.iter().filter(|&r| r == &Res::Ok).count();
+    let decide_lock = |results: HashMap<Res, usize>, membership: IrMembershipSize| {
         //println!("deciding {ok} of {} : {results:?}", results.len());
-        if ok >= membership.f_plus_one() {
+        if results.get(&Res::Ok).copied().unwrap_or_default() >= membership.f_plus_one() {
             Res::Ok
         } else {
             Res::No

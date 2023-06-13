@@ -35,7 +35,7 @@ impl<K, V> Transaction<K, V> {
 
 impl<
         K: Debug + Clone + Hash + Eq,
-        V: PartialEq + Debug + Clone,
+        V: Eq + Hash + Debug + Clone,
         T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
     > ShardClient<K, V, T>
 {
