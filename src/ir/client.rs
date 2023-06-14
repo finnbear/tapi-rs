@@ -79,8 +79,11 @@ impl<T: Transport> SyncInner<T> {
     }
 }
 
-impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Eq + Hash + Debug>
-    Client<T, O, R>
+impl<
+        T: Transport<Message = Message<O, R>>,
+        O: Clone + Debug,
+        R: Clone + Eq + Hash + Send + Debug,
+    > Client<T, O, R>
 {
     pub(crate) fn new(membership: Membership<T>, transport: T) -> Self {
         Self {
@@ -209,6 +212,7 @@ impl<T: Transport<Message = Message<O, R>>, O: Clone + Debug, R: Clone + Eq + Ha
                     continue;
                 }
 
+                println!("finalizing to membership: {:?}", sync.membership);
                 for (_, address) in &sync.membership {
                     inner
                         .transport

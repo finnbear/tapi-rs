@@ -10,7 +10,7 @@ use crate::{Transport, TransportMessage};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, Weak},
     time::{Duration, Instant},
 };
 
@@ -166,11 +166,14 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
 
     fn tick(&self) {
         let my_index = self.index;
-        let inner = Arc::clone(&self.inner);
+        let inner = Arc::downgrade(&self.inner);
         tokio::spawn(async move {
             loop {
                 T::sleep(Self::VIEW_CHANGE_INTERVAL).await;
 
+                let Some(inner) = inner.upgrade() else {
+                    break;
+                };
                 let mut sync = inner.sync.lock().unwrap();
                 if sync.changed_view_recently {
                     sync.changed_view_recently = false;

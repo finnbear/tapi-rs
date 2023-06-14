@@ -117,9 +117,13 @@ impl<
                     commit,
                 } => {
                     if matches!(entry.result, Some(Reply::Prepare(OccPrepareResult::Ok))) {
-                        self.inner
-                            .prepared
-                            .insert(*transaction_id, (*commit, transaction.clone()));
+                        if !self.inner.prepared.contains_key(transaction_id)
+                            && !self.transaction_log.contains_key(transaction_id)
+                        {
+                            self.inner
+                                .prepared
+                                .insert(*transaction_id, (*commit, transaction.clone()));
+                        }
                     } else if self.inner.prepared.remove(&transaction_id).is_some()
                         && matches!(entry.result, Some(Reply::Prepare(OccPrepareResult::NoVote)))
                         && !self.transaction_log.contains_key(&transaction_id)
@@ -127,8 +131,26 @@ impl<
                         self.no_vote_list.insert(*transaction_id, *commit);
                     }
                 }
-                _ => {
-                    unimplemented!();
+                Request::Commit {
+                    transaction_id,
+                    transaction,
+                    commit,
+                } => {
+                    self.transaction_log
+                        .insert(*transaction_id, (*commit, transaction.clone(), true));
+                    self.inner.prepared.remove(transaction_id);
+                }
+                Request::Abort {
+                    transaction_id,
+                    transaction,
+                    commit,
+                } => {
+                    self.transaction_log
+                        .insert(*transaction_id, (*commit, transaction.clone(), false));
+                    self.inner.prepared.remove(transaction_id);
+                }
+                Request::Get { .. } => {
+                    debug_assert!(false, "these are not replicated");
                 }
             }
         }

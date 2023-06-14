@@ -2,6 +2,7 @@ use super::{Timestamp, Transaction, TransactionId};
 use crate::MvccStore;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::ops::Bound;
 use std::{borrow::Borrow, collections::HashMap};
@@ -36,7 +37,7 @@ impl<K, V, TS> Store<K, V, TS> {
     }
 }
 
-impl<K: Eq + Hash + Clone, V, TS: Timestamp> Store<K, V, TS> {
+impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
     pub(crate) fn get<Q: ?Sized + Eq + Hash>(&self, key: &Q) -> (Option<&V>, TS)
     where
         K: Borrow<Q>,
@@ -69,6 +70,8 @@ impl<K: Eq + Hash + Clone, V, TS: Timestamp> Store<K, V, TS> {
         let prepared_reads = self.prepared_reads();
         let prepared_writes = self.prepared_writes();
 
+        println!("pr = {prepared_reads:?}, pw = {prepared_writes:?}");
+
         // Check for conflicts with the read set.
         for (key, read) in &transaction.read_set {
             // If we don't have this key then no conflicts for read.
@@ -79,26 +82,22 @@ impl<K: Eq + Hash + Clone, V, TS: Timestamp> Store<K, V, TS> {
                 continue;
             }
 
-            if let Some(end) = end {
-                // Value is now invalid (not the latest version).
-                if self.linearizable || commit > end {
-                    return PrepareResult::Fail;
-                } else {
-                    // There may be a pending write in the past.
-                    if let Some(writes) = prepared_writes.get(key) {
-                        if writes
-                            .range((Bound::Excluded(*read), Bound::Excluded(commit)))
-                            .next()
-                            .is_some()
-                        {
-                            // Read conflicts with later prepared write.
-                            return PrepareResult::Abstain;
-                        }
-                    }
-                }
-            } else {
-                // The value is still valid (the latest version).
-                if let Some(writes) = prepared_writes.get(key) && (self.linearizable || writes.lower_bound(Bound::Excluded(&commit)).key().is_some()) {
+            if let Some(end) = end && (self.linearizable || commit > end) {
+                // Read value is now invalid (not the latest version), so
+                // the prepare isn't linearizable and may not be serializable.
+                //
+                // In other words, the read conflicts with a later committed write.
+                return PrepareResult::Fail;
+            }
+
+            // There may be a pending write that would invalidate the read version.
+            if let Some(writes) = prepared_writes.get(key) {
+                if self.linearizable
+                    || writes
+                        .range((Bound::Excluded(*read), Bound::Excluded(commit)))
+                        .next()
+                        .is_some()
+                {
                     // Read conflicts with later prepared write.
                     return PrepareResult::Abstain;
                 }

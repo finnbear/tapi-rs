@@ -25,7 +25,7 @@ pub(crate) trait Transport: Clone + Send + Sync + 'static {
     fn persisted<T: DeserializeOwned>(&self, key: &str) -> Option<T>;
 
     /// Send/retry, ignoring any errors, until there is a reply.
-    fn send<R: TryFrom<Self::Message>>(
+    fn send<R: TryFrom<Self::Message> + Send + Debug>(
         &self,
         address: Self::Address,
         message: impl Into<Self::Message> + Debug,

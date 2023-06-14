@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::transport::Transport;
 
 use super::ReplicaIndex;
@@ -6,9 +8,17 @@ use super::ReplicaIndex;
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub(crate) struct Size(usize);
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct Membership<T: Transport> {
     members: Vec<T::Address>,
+}
+
+impl<T: Transport> Debug for Membership<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Membership")
+            .field("members", &self.members)
+            .finish()
+    }
 }
 
 impl<T: Transport> Membership<T> {

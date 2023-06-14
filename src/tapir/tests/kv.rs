@@ -11,13 +11,9 @@ use std::{
 
 #[tokio::test]
 async fn test_kv() {
-    kv(false, 3).await;
-
-    return;
-
-    for _ in 0..5 {
+    for _ in 0..500 {
         for linearizable in [false, true] {
-            for replicas in (3..=9).step_by(2) {
+            for replicas in (3..=7/* 11 */).step_by(2) {
                 kv(linearizable, replicas).await;
             }
         }
@@ -25,6 +21,10 @@ async fn test_kv() {
 }
 
 async fn kv(linearizable: bool, num_replicas: usize) {
+    println!("---------------------------");
+    println!(" linearizable={linearizable} num_replicas={num_replicas}");
+    println!("---------------------------");
+
     type K = Vec<u8>;
     type V = Vec<u8>;
     type Op = TapirRequest<K, V>;
@@ -94,7 +94,7 @@ async fn kv(linearizable: bool, num_replicas: usize) {
         let result = txn.get(vec![1]).await;
         if let Some(commit) = txn.commit().await {
             if result.is_none() {
-                assert!(commit < first);
+                assert!(commit < first, "{commit:?} {first:?}");
             } else {
                 assert_eq!(result, Some(vec![2]));
                 assert!(commit > first);

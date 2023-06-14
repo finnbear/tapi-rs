@@ -23,7 +23,7 @@ pub(crate) struct ShardClient<K, V, T: Transport> {
 
 impl<
         K: Debug + Clone + Hash + Eq,
-        V: Eq + Hash + Debug + Clone,
+        V: Eq + Hash + Debug + Clone + Send,
         T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
     > ShardClient<K, V, T>
 {
@@ -65,7 +65,7 @@ struct Inner<K, V> {
 
 impl<
         K: Eq + Hash + Clone + Debug,
-        V: Clone + Debug + Hash + Eq,
+        V: Clone + Debug + Hash + Eq + Send,
         T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
     > ShardTransaction<K, V, T>
 {

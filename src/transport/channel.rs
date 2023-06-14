@@ -117,7 +117,7 @@ impl<M: Message> Transport for Channel<M> {
             .and_then(|value| serde_json::from_str(value).ok())
     }
 
-    fn send<R: TryFrom<M>>(
+    fn send<R: TryFrom<M> + Send + Debug>(
         &self,
         address: Self::Address,
         message: impl Into<Self::Message> + Debug,
@@ -128,23 +128,23 @@ impl<M: Message> Transport for Channel<M> {
         let inner = Arc::clone(&self.inner);
         async move {
             loop {
-                Self::random_delay(25..50).await;
-                let inner = inner.read().unwrap();
-                let callback = inner.callbacks.get(address).map(Arc::clone);
-                drop(inner);
+                Self::random_delay(1..50).await;
+                let callback = {
+                    let inner = inner.read().unwrap();
+                    inner.callbacks.get(address).map(Arc::clone)
+                };
                 if let Some(callback) = callback.as_ref() {
                     if Self::should_drop(from, address) {
                         continue;
                     }
-                    let reply = callback(from, message.clone());
-                    if let Some(reply) = reply {
-                        println!("{address} replying {reply:?} to {from}");
-                        if let Ok(result) = reply.try_into() {
-                            if !Self::should_drop(address, from) {
-                                break result;
-                            }
-                        } else {
-                            println!("unexpected type");
+                    let result = callback(from, message.clone())
+                        .map(|r| r.try_into().unwrap_or_else(|_| panic!()));
+                    if let Some(result) = result {
+                        let should_drop = Self::should_drop(address, from);
+                        println!("{address} replying {result:?} to {from} (drop = {should_drop})");
+                        if !should_drop {
+                            Self::random_delay(1..50).await;
+                            break result;
                         }
                     }
                 } else {
@@ -156,15 +156,16 @@ impl<M: Message> Transport for Channel<M> {
 
     fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + Debug) {
         let from = self.address;
-        println!("{from} do-sending {message:?} to {address}");
+        let should_drop = Self::should_drop(self.address, address);
+        println!("{from} do-sending {message:?} to {address} (drop = {should_drop})");
         let message = message.into();
         let inner = self.inner.read().unwrap();
         let callback = inner.callbacks.get(address).map(Arc::clone);
         drop(inner);
         if let Some(callback) = callback {
-            if !Self::should_drop(self.address, address) {
+            if !should_drop {
                 tokio::spawn(async move {
-                    Self::random_delay(25..50).await;
+                    Self::random_delay(1..50).await;
                     callback(from, message);
                 });
             }

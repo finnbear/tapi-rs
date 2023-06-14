@@ -25,7 +25,7 @@ pub(crate) struct Transaction<K, V, T: Transport> {
 
 impl<
         K: Debug + Clone + Hash + Eq,
-        V: Eq + Hash + Debug + Clone,
+        V: Eq + Hash + Debug + Clone + Send,
         T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
     > Client<K, V, T>
 {
@@ -51,7 +51,7 @@ impl<
 
 impl<
         K: Debug + Clone + Hash + Eq,
-        V: Eq + Hash + Debug + Clone,
+        V: Eq + Hash + Debug + Clone + Send,
         T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
     > Transaction<K, V, T>
 {
