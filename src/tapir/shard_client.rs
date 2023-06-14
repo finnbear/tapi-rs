@@ -148,6 +148,7 @@ impl<
             },
             |results, membership_size| {
                 let mut ok_count = 0;
+                let mut abstain_count = 0;
                 let mut timestamp = 0u64;
 
                 for (reply, count) in results {
@@ -162,7 +163,9 @@ impl<
                         OccPrepareResult::Retry { proposed } => {
                             timestamp = timestamp.max(proposed);
                         }
-                        OccPrepareResult::Abstain => {}
+                        OccPrepareResult::Abstain => {
+                            abstain_count += count;
+                        }
                         OccPrepareResult::Fail => {
                             return Reply::Prepare(OccPrepareResult::Fail);
                         }
@@ -172,10 +175,14 @@ impl<
 
                 Reply::Prepare(if ok_count >= membership_size.f_plus_one() {
                     OccPrepareResult::Ok
-                } else {
+                } else if abstain_count >= membership_size.f_plus_one() {
+                    OccPrepareResult::Fail
+                } else if timestamp > 0 {
                     OccPrepareResult::Retry {
                         proposed: timestamp,
                     }
+                } else {
+                    OccPrepareResult::Fail
                 })
             },
         );

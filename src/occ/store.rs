@@ -77,17 +77,16 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
             // If we don't have this key then no conflicts for read.
             let (beginning, end) = self.inner.get_range(key, *read);
 
-            // If we don't have this version then no conflicts for read.
-            if beginning != *read {
-                continue;
-            }
-
-            if let Some(end) = end && (self.linearizable || commit > end) {
-                // Read value is now invalid (not the latest version), so
-                // the prepare isn't linearizable and may not be serializable.
-                //
-                // In other words, the read conflicts with a later committed write.
-                return PrepareResult::Fail;
+            if beginning == *read {
+                if let Some(end) = end && (self.linearizable || commit > end) {
+                    // Read value is now invalid (not the latest version), so
+                    // the prepare isn't linearizable and may not be serializable.
+                    //
+                    // In other words, the read conflicts with a later committed write.
+                    return PrepareResult::Fail;
+                }
+            } else {
+                // If we don't have this version then no conflicts for read.
             }
 
             // There may be a pending write that would invalidate the read version.
