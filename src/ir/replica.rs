@@ -54,9 +54,8 @@ pub(crate) trait Upcalls: Send + 'static {
     );
     fn merge(
         &mut self,
-        d: HashMap<OpId, Vec<RecordEntry<Self::Op, Self::Result>>>,
-        u: HashMap<OpId, Vec<RecordEntry<Self::Op, Self::Result>>>,
-        majority_results_in_d: HashMap<OpId, Self::Result>,
+        d: HashMap<OpId, (Self::Op, Self::Result)>,
+        u: Vec<(OpId, Self::Op, Option<Self::Result>)>,
     ) -> HashMap<OpId, Self::Result>;
 }
 
@@ -393,11 +392,9 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
 
                                     // build d and u
                                     let mut d =
-                                        HashMap::<OpId, Vec<RecordEntry<U::Op, U::Result>>>::new();
+                                        HashMap::<OpId, (U::Op, U::Result)>::new();
                                     let mut u =
-                                        HashMap::<OpId, Vec<RecordEntry<U::Op, U::Result>>>::new();
-                                    let mut majority_results_in_d =
-                                        HashMap::<OpId, U::Result>::new();
+                                        Vec::<(OpId, U::Op, Option<U::Result>)>::new();
 
                                     for (op_id, entries) in entries_by_opid.clone() {
                                         let mut majority_result_in_d = None;
@@ -418,11 +415,9 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                         }
 
                                         if let Some(majority_result_in_d) = majority_result_in_d {
-                                            d.insert(op_id, entries);
-                                            majority_results_in_d
-                                                .insert(op_id, majority_result_in_d);
+                                            d.insert(op_id, (entries[0].op.clone(), majority_result_in_d));
                                         } else {
-                                            u.insert(op_id, entries);
+                                            u.extend(entries.into_iter().map(|e| (op_id, e.op, e.result)));
                                         }
                                     }
 
@@ -432,7 +427,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     }
 
                                     let results_by_opid =
-                                        sync.upcalls.merge(d, u, majority_results_in_d);
+                                        sync.upcalls.merge(d, u);
 
                                     //let mut merged = Record::default();
                                     for (op_id, result) in results_by_opid {

@@ -2,7 +2,8 @@ use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
 use super::{Reply, Request, Timestamp};
 use crate::{
-    IrRecord, IrReplicaUpcalls, OccPrepareResult, OccStore, OccTransaction, OccTransactionId,
+    IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult, OccStore, OccTransaction,
+    OccTransactionId,
 };
 
 pub(crate) struct Replica<K, V> {
@@ -158,16 +159,112 @@ impl<
 
     fn merge(
         &mut self,
-        d: std::collections::HashMap<
-            crate::ir::OpId,
-            Vec<crate::ir::RecordEntry<Self::Op, Self::Result>>,
-        >,
-        u: std::collections::HashMap<
-            crate::ir::OpId,
-            Vec<crate::ir::RecordEntry<Self::Op, Self::Result>>,
-        >,
-        majority_results_in_d: std::collections::HashMap<crate::ir::OpId, Self::Result>,
-    ) -> std::collections::HashMap<crate::ir::OpId, Self::Result> {
-        Default::default()
+        d: HashMap<IrOpId, (Self::Op, Self::Result)>,
+        u: Vec<(IrOpId, Self::Op, Option<Self::Result>)>,
+    ) -> HashMap<IrOpId, Self::Result> {
+        let mut ret: HashMap<IrOpId, Self::Result> = HashMap::new();
+        for (op_id, request) in u
+            .iter()
+            .map(|(op_id, op, _)| (op_id, op))
+            .chain(d.iter().map(|(op_id, (op, _))| (op_id, op)))
+        {
+            match request {
+                Request::Prepare {
+                    transaction_id,
+                    transaction,
+                    ..
+                }
+                | Request::Commit {
+                    transaction_id,
+                    transaction,
+                    ..
+                }
+                | Request::Abort {
+                    transaction_id,
+                    transaction,
+                    ..
+                } => {
+                    self.inner.prepared.remove(transaction_id);
+                    self.no_vote_list.remove(transaction_id);
+                }
+                Request::Get { .. } => {
+                    debug_assert!(false);
+                }
+            }
+        }
+
+        for (op_id, (request, reply)) in &d {
+            match request {
+                Request::Prepare {
+                    transaction_id,
+                    transaction,
+                    commit,
+                }
+                | Request::Commit {
+                    transaction_id,
+                    transaction,
+                    commit,
+                }
+                | Request::Abort {
+                    transaction_id,
+                    transaction,
+                    commit,
+                } => {
+                    let reply = ret.insert(
+                        *op_id,
+                        Reply::Prepare(if self.no_vote_list.contains_key(transaction_id) {
+                            OccPrepareResult::NoVote
+                        } else if !self.transaction_log.contains_key(transaction_id)
+                            && matches!(reply, Reply::Prepare(OccPrepareResult::Ok))
+                        {
+                            self.inner
+                                .prepare(*transaction_id, transaction.clone(), *commit)
+                        } else if let Reply::Prepare(result) = reply {
+                            *result
+                        } else {
+                            unreachable!();
+                        }),
+                    );
+                }
+                Request::Get { .. } => {
+                    debug_assert!(false);
+                }
+            }
+        }
+
+        for (op_id, request, _) in &u {
+            match request {
+                Request::Prepare {
+                    transaction_id,
+                    transaction,
+                    commit,
+                }
+                | Request::Commit {
+                    transaction_id,
+                    transaction,
+                    commit,
+                }
+                | Request::Abort {
+                    transaction_id,
+                    transaction,
+                    commit,
+                } => {
+                    ret.insert(
+                        *op_id,
+                        Reply::Prepare(if self.no_vote_list.contains_key(transaction_id) {
+                            OccPrepareResult::NoVote
+                        } else {
+                            self.inner
+                                .prepare(*transaction_id, transaction.clone(), *commit)
+                        }),
+                    );
+                }
+                Request::Get { .. } => {
+                    debug_assert!(false);
+                }
+            }
+        }
+
+        ret
     }
 }

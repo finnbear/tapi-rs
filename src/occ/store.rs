@@ -13,7 +13,7 @@ pub(crate) struct Store<K, V, TS> {
     pub(crate) prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>)>,
 }
 
-#[derive(Debug, Eq, PartialEq, Hash, Clone)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
 pub(crate) enum PrepareResult<TS: Timestamp> {
     /// The transaction is possible.
     Ok,

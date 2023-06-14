@@ -104,32 +104,32 @@ async fn lock_server(num_replicas: usize) {
         }
         fn merge(
             &mut self,
-            d: HashMap<IrOpId, Vec<IrRecordEntry<Self::Op, Self::Result>>>,
-            u: HashMap<IrOpId, Vec<IrRecordEntry<Self::Op, Self::Result>>>,
-            majority_results_in_d: HashMap<IrOpId, Self::Result>,
+            d: HashMap<IrOpId, (Self::Op, Self::Result)>,
+            u: Vec<(IrOpId, Self::Op, Option<Self::Result>)>,
         ) -> HashMap<IrOpId, Self::Result> {
             let mut results = HashMap::<IrOpId, Self::Result>::new();
 
-            for (op_id, entries) in &d {
-                let request = entries[0].op.clone();
+            for (op_id, (request, reply)) in &d {
                 let Op::Lock(client_id) = request else {
                     panic!();
                 };
-                let reply = majority_results_in_d.get(op_id).unwrap();
-
                 let successful = matches!(reply, Res::Ok);
 
-                if successful && self.locked.is_none() {
-                    self.locked = Some(client_id);
-                    results.insert(*op_id, Res::Ok);
-                } else {
-                    results.insert(*op_id, Res::No);
-                }
-
-                for (op_id, entries) in &u {
-                    results.insert(*op_id, Res::No);
-                }
+                results.insert(
+                    *op_id,
+                    if successful && self.locked.is_none() {
+                        self.locked = Some(*client_id);
+                        Res::Ok
+                    } else {
+                        Res::No
+                    },
+                );
             }
+
+            for (op_id, _, _) in &u {
+                results.insert(*op_id, Res::No);
+            }
+
             results
         }
     }
