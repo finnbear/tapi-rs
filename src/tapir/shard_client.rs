@@ -96,17 +96,15 @@ impl<
             if let Some(read) = lock.read_cache.get(&key) {
                 return read.as_ref().cloned();
             }
+            drop(lock);
 
             let future = client.invoke_unlogged(
                 IrReplicaIndex(0),
                 Request::Get {
-                    transaction_id: lock.id,
                     key: key.clone(),
                     timestamp: None,
                 },
             );
-
-            drop(lock);
 
             let reply = future.await;
 
@@ -168,6 +166,7 @@ impl<
                         OccPrepareResult::Fail => {
                             return Reply::Prepare(OccPrepareResult::Fail);
                         }
+                        OccPrepareResult::NoVote => unimplemented!(),
                     }
                 }
 
@@ -191,15 +190,23 @@ impl<
         }
     }
 
-    pub(crate) fn end(&self, commit: bool) -> impl Future<Output = ()> {
+    pub(crate) fn end(
+        &self,
+        prepared_timestamp: Timestamp,
+        commit: bool,
+    ) -> impl Future<Output = ()> {
         let mut lock = self.inner.lock().unwrap();
         let future = self.client.invoke_inconsistent(if commit {
             Request::Commit {
                 transaction_id: lock.id,
+                transaction: lock.inner.clone(),
+                commit: prepared_timestamp,
             }
         } else {
             Request::Abort {
                 transaction_id: lock.id,
+                transaction: lock.inner.clone(),
+                commit: prepared_timestamp,
             }
         });
         drop(lock);

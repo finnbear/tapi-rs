@@ -71,7 +71,11 @@ async fn lock_server(num_replicas: usize) {
                 _ => panic!(),
             }
         }
-        fn sync(&mut self, record: &IrRecord<Self::Op, Self::Result>) {
+        fn sync(
+            &mut self,
+            _: &IrRecord<Self::Op, Self::Result>,
+            record: &IrRecord<Self::Op, Self::Result>,
+        ) {
             self.locked = None;
 
             let mut locked = HashSet::<IrClientId>::new();

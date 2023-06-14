@@ -10,7 +10,7 @@ Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-
   - [x] View changes
   - [x] Recovery
   - [ ] Epoch changes
-  - [ ] Garbage collection of log
+  - [ ] Garbage collection of record
   - [ ] Real network transport
 - [ ] TAPIR
   - [x] Get
@@ -19,7 +19,7 @@ Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-
   - [x] Commit
   - [x] Abort
   - [x] Optional linearizability
-  - [ ] IR Sync & merge
+  - [ ] IR sync & merge
   - [ ] Sharding
   - [ ] Cooperative termination
   - [ ] Garbage collection of OCC versions

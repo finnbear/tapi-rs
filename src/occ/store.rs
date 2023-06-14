@@ -9,15 +9,21 @@ use std::{borrow::Borrow, collections::HashMap};
 pub(crate) struct Store<K, V, TS> {
     linearizable: bool,
     inner: MvccStore<K, V, TS>,
-    prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>)>,
+    pub(crate) prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>)>,
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub(crate) enum PrepareResult<TS: Timestamp> {
+    /// The transaction is possible.
     Ok,
+    /// There was a conflict that might be resolved by retrying prepare at a different timestamp.
     Retry { proposed: TS::Time },
+    /// There was a conflict with a prepared transaction (which may later abort).
     Abstain,
+    /// There was a conflict with a committed transaction.
     Fail,
+    /// Used for coordinator recovery purposes.
+    NoVote,
 }
 
 impl<K, V, TS> Store<K, V, TS> {
@@ -146,11 +152,12 @@ impl<K: Eq + Hash + Clone, V, TS: Timestamp> Store<K, V, TS> {
         PrepareResult::Ok
     }
 
-    pub(crate) fn commit(&mut self, id: TransactionId) {
-        let Some((commit, transaction)) = self.prepared.remove(&id) else {
-            return;
-        };
-
+    pub(crate) fn commit(
+        &mut self,
+        id: TransactionId,
+        transaction: Transaction<K, V, TS>,
+        commit: TS,
+    ) {
         for (key, read) in transaction.read_set {
             self.inner.commit_get(key.clone(), read, commit);
         }
@@ -158,9 +165,13 @@ impl<K: Eq + Hash + Clone, V, TS: Timestamp> Store<K, V, TS> {
         for (key, value) in transaction.write_set {
             self.inner.put(key, value, commit);
         }
+
+        // Note: Transaction may not be in the prepared list of this particular replica, and that's okay.
+        self.prepared.remove(&id);
     }
 
     pub(crate) fn abort(&mut self, id: TransactionId) {
+        // Note: Transaction may not be in the prepared list of this particular replica, and that's okay.
         self.prepared.remove(&id);
     }
 

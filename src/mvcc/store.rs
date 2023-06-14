@@ -64,16 +64,17 @@ impl<K: Hash + Eq, V, TS: Ord + Eq + Copy + Default> Store<K, V, TS> {
     {
         self.inner
             .get(key)
-            .and_then(|versions| {
+            .map(|versions| {
                 let mut cursor = versions.upper_bound(Bound::Included(&timestamp));
                 if let Some((fk, _)) = cursor.key_value() {
                     if let Some((lk, _)) = cursor.peek_next() {
-                        Some((*fk, Some(*lk)))
+                        (*fk, Some(*lk))
                     } else {
-                        Some((*fk, None))
+                        (*fk, None)
                     }
                 } else {
-                    None
+                    // Start at the implicit version and end at the first explict version, if any.
+                    (TS::default(), versions.first_key_value().map(|(k, _)| *k))
                 }
             })
             .unwrap_or_default()

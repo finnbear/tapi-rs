@@ -47,7 +47,11 @@ pub(crate) trait Upcalls: Send + 'static {
     fn exec_unlogged(&mut self, op: Self::Op) -> Self::Result;
     fn exec_inconsistent(&mut self, op: &Self::Op);
     fn exec_consensus(&mut self, op: &Self::Op) -> Self::Result;
-    fn sync(&mut self, record: &Record<Self::Op, Self::Result>);
+    fn sync(
+        &mut self,
+        local: &Record<Self::Op, Self::Result>,
+        leader: &Record<Self::Op, Self::Result>,
+    );
     fn merge(
         &mut self,
         d: HashMap<OpId, Vec<RecordEntry<Self::Op, Self::Result>>>,
@@ -419,7 +423,11 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                         }
                                     }
 
-                                    sync.upcalls.sync(&R);
+                                    {
+                                        let sync = &mut *sync;
+                                        sync.upcalls.sync(&sync.record, &R);
+                                    }
+
                                     let results_by_opid =
                                         sync.upcalls.merge(d, u, majority_results_in_d);
 
@@ -470,8 +478,8 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                     || (view_number == sync.view.number || !sync.status.is_normal())
                 {
                     println!("{:?} starting view {view_number:?}", self.index);
+                    sync.upcalls.sync(&sync.record, &new_record);
                     sync.record = new_record;
-                    sync.upcalls.sync(&sync.record);
                     sync.status = Status::Normal;
                     sync.view.number = view_number;
                     sync.latest_normal_view = view_number;

@@ -1,16 +1,24 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
 use super::{Reply, Request, Timestamp};
-use crate::{IrReplicaUpcalls, OccStore};
+use crate::{
+    IrRecord, IrReplicaUpcalls, OccPrepareResult, OccStore, OccTransaction, OccTransactionId,
+};
 
 pub(crate) struct Replica<K, V> {
     inner: OccStore<K, V, Timestamp>,
+    /// Stores the commit timestamp, read/write sets, and commit status (true if committed) for
+    /// all known committed and aborted transactions.
+    transaction_log: HashMap<OccTransactionId, (Timestamp, OccTransaction<K, V, Timestamp>, bool)>,
+    no_vote_list: HashMap<OccTransactionId, Timestamp>,
 }
 
 impl<K, V> Replica<K, V> {
     pub(crate) fn new(linearizable: bool) -> Self {
         Self {
             inner: OccStore::new(linearizable),
+            transaction_log: HashMap::new(),
+            no_vote_list: HashMap::new(),
         }
     }
 }
@@ -25,11 +33,7 @@ impl<
 
     fn exec_unlogged(&mut self, op: Self::Op) -> Self::Result {
         match op {
-            Request::Get {
-                transaction_id,
-                key,
-                timestamp,
-            } => {
+            Request::Get { key, timestamp } => {
                 let (v, ts) = if let Some(timestamp) = timestamp {
                     self.inner.get_at(&key, timestamp)
                 } else {
@@ -43,10 +47,23 @@ impl<
 
     fn exec_inconsistent(&mut self, op: &Self::Op) {
         match op {
-            Request::Commit { transaction_id } => {
-                self.inner.commit(*transaction_id);
+            Request::Commit {
+                transaction_id,
+                transaction,
+                commit,
+            } => {
+                self.transaction_log
+                    .insert(*transaction_id, (*commit, transaction.clone(), true));
+                self.inner
+                    .commit(*transaction_id, transaction.clone(), *commit);
             }
-            Request::Abort { transaction_id } => {
+            Request::Abort {
+                transaction_id,
+                transaction,
+                commit,
+            } => {
+                self.transaction_log
+                    .insert(*transaction_id, (*commit, transaction.clone(), false));
                 self.inner.abort(*transaction_id);
             }
             _ => unreachable!(),
@@ -61,15 +78,61 @@ impl<
         } = op
         {
             Reply::Prepare(
-                self.inner
-                    .prepare(*transaction_id, transaction.clone(), *commit),
+                if let Some((_, _, commit)) = self.transaction_log.get(transaction_id) {
+                    if *commit {
+                        OccPrepareResult::Ok
+                    } else {
+                        OccPrepareResult::Fail
+                    }
+                } else {
+                    self.inner
+                        .prepare(*transaction_id, transaction.clone(), *commit)
+                },
             )
         } else {
             unreachable!();
         }
     }
 
-    fn sync(&mut self, record: &crate::ir::Record<Self::Op, Self::Result>) {}
+    fn sync(
+        &mut self,
+        local: &IrRecord<Self::Op, Self::Result>,
+        leader: &IrRecord<Self::Op, Self::Result>,
+    ) {
+        for (op_id, entry) in &leader.entries {
+            if local
+                .entries
+                .get(op_id)
+                .map(|local| local.result == entry.result)
+                .unwrap_or(false)
+            {
+                // Record already in local state.
+                continue;
+            }
+
+            match &entry.op {
+                Request::Prepare {
+                    transaction_id,
+                    transaction,
+                    commit,
+                } => {
+                    if matches!(entry.result, Some(Reply::Prepare(OccPrepareResult::Ok))) {
+                        self.inner
+                            .prepared
+                            .insert(*transaction_id, (*commit, transaction.clone()));
+                    } else if self.inner.prepared.remove(&transaction_id).is_some()
+                        && matches!(entry.result, Some(Reply::Prepare(OccPrepareResult::NoVote)))
+                        && !self.transaction_log.contains_key(&transaction_id)
+                    {
+                        self.no_vote_list.insert(*transaction_id, *commit);
+                    }
+                }
+                _ => {
+                    unimplemented!();
+                }
+            }
+        }
+    }
 
     fn merge(
         &mut self,

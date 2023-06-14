@@ -63,24 +63,25 @@ impl<
         self.inner.put(key, value);
     }
 
-    pub(crate) fn commit(&self) -> impl Future<Output = bool> {
+    pub(crate) fn commit(&self) -> impl Future<Output = Option<Timestamp>> {
         let inner = self.inner.clone();
         let time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let future = inner.prepare(Timestamp {
+        let timestamp = Timestamp {
             time,
             client_id: self.inner.client.id(),
-        });
+        };
+        let future = inner.prepare(timestamp);
 
         async move {
             let result = future.await;
             println!("COMMITTING {:?}", result);
             // TODO: retries.
             let ok = matches!(result, OccPrepareResult::Ok);
-            inner.end(ok).await;
-            ok
+            inner.end(timestamp, ok).await;
+            Some(timestamp).filter(|_| ok)
         }
     }
 }
