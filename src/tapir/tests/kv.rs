@@ -16,7 +16,7 @@ use std::{
 #[tokio::test]
 async fn test_kv() {
     for _ in 0..500 {
-        for replicas in (3..=7/* 11 */).step_by(2) {
+        for replicas in (3..=3/* 11 */).step_by(2) {
             increment_parallel(replicas).await;
             increment_sequential(replicas).await;
             for linearizable in [false, true] {

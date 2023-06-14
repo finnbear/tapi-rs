@@ -1,4 +1,5 @@
-use futures::{stream::FuturesOrdered, FutureExt, Stream};
+use futures::stream::FuturesUnordered;
+use futures::{FutureExt, Stream};
 use pin_project_lite::pin_project;
 use std::collections::HashMap;
 use std::future::Future;
@@ -14,7 +15,7 @@ pin_project! {
     #[must_use = "futures do nothing unless you `.await` or poll them"]
     pub(crate) struct JoinUntil<K, F: Future, U: Until<K, F::Output>> {
         #[pin]
-        active: FuturesOrdered<KeyedFuture<K, F>>,
+        active: FuturesUnordered<KeyedFuture<K, F>>,
         output: HashMap<K, F::Output>,
         until: U
     }
@@ -61,9 +62,9 @@ pub(crate) fn join_until<K, F, I: IntoIterator<Item = (K, F)>, U: Until<K, F::Ou
 where
     F: Future,
 {
-    let mut active = FuturesOrdered::default();
+    let mut active = FuturesUnordered::default();
     for (key, future) in iter {
-        active.push_back(KeyedFuture {
+        active.push(KeyedFuture {
             key: Some(key),
             future,
         });

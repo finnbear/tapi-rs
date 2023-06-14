@@ -69,7 +69,7 @@ impl<M> Clone for Channel<M> {
 
 impl<M: Message> Channel<M> {
     fn should_drop(from: usize, to: usize) -> bool {
-        //from == 0 || to == 0
+        return from == 1 || to == 1;
 
         use rand::Rng;
         rand::thread_rng().gen_bool(1.0 / 5.0)
@@ -92,7 +92,7 @@ impl<M: Message> Transport for Channel<M> {
     }
 
     fn sleep(duration: Duration) -> Self::Sleep {
-        tokio::time::sleep(duration / 15)
+        tokio::time::sleep(duration / 10)
     }
 
     fn persist<T: Serialize>(&self, key: &str, value: Option<&T>) {
@@ -126,7 +126,7 @@ impl<M: Message> Transport for Channel<M> {
         let inner = Arc::clone(&self.inner);
         async move {
             loop {
-                Self::random_delay(1..50).await;
+                Self::random_delay(10..50).await;
                 let callback = {
                     let inner = inner.read().unwrap();
                     inner.callbacks.get(address).map(Arc::clone)
@@ -141,7 +141,7 @@ impl<M: Message> Transport for Channel<M> {
                         let should_drop = Self::should_drop(address, from);
                         println!("{address} replying {result:?} to {from} (drop = {should_drop})");
                         if !should_drop {
-                            Self::random_delay(1..50).await;
+                            //Self::random_delay(1..50).await;
                             break result;
                         }
                     }

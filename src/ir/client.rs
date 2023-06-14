@@ -235,7 +235,7 @@ impl<
                 .map(|r| &r.result)
         }
 
-        fn get_quorum<R: PartialEq>(
+        fn get_quorum<R: PartialEq + Debug>(
             membership: MembershipSize,
             replies: &HashMap<ReplicaIndex, ReplyConsensus<R>>,
             matching_results: bool,
@@ -312,6 +312,8 @@ impl<
                 let finalized = get_finalized(&results);
                 println!("checking quorum: {}", finalized.is_some());
                 if finalized.is_none() && let Some((_, result)) = get_quorum(membership_size, &results, true) {
+                    println!("fast path");
+
                     // Fast path.
                     for (_, address) in &sync.membership {
                         inner.transport.do_send(
@@ -340,6 +342,8 @@ impl<
                         ), Some(view_number))
                     })
                 }) {
+                    println!("slow/finalized path");
+
                     fn get_quorum_view(membership: MembershipSize, results: &HashMap<ReplicaIndex, Confirm>) -> Option<ViewNumber> {
                         let threshold = membership.f_plus_one();
                         for result in results.values() {
@@ -383,6 +387,8 @@ impl<
                     if let Some(quorum_view) = get_quorum_view(membership_size, &results) && reply_consensus_view.map(|reply_consensus_view| quorum_view == reply_consensus_view).unwrap_or(true) {
                         return result;
                     }
+                } else {
+                    println!("no quorum");
                 }
             }
         }
