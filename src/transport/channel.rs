@@ -69,6 +69,7 @@ impl<M> Clone for Channel<M> {
 
 impl<M: Message> Channel<M> {
     fn should_drop(from: usize, to: usize) -> bool {
+        return false;
         // return from == 1 || to == 1;
 
         use rand::Rng;
@@ -92,14 +93,14 @@ impl<M: Message> Transport for Channel<M> {
     }
 
     fn sleep(duration: Duration) -> Self::Sleep {
-        tokio::time::sleep(duration / 10)
+        tokio::time::sleep(duration)
     }
 
     fn persist<T: Serialize>(&self, key: &str, value: Option<&T>) {
         let mut persistent = self.persistent.lock().unwrap();
         if let Some(value) = value {
             let string = serde_json::to_string(&value).unwrap();
-            println!("{} persisting {key} = {string}", self.address);
+            // println!("{} persisting {key} = {string}", self.address);
             persistent.insert(key.to_owned(), string);
         } else {
             persistent.remove(key);
@@ -121,7 +122,7 @@ impl<M: Message> Transport for Channel<M> {
         message: impl Into<Self::Message> + Debug,
     ) -> impl Future<Output = R> + 'static {
         let from: usize = self.address;
-        println!("{from} sending {message:?} to {address}");
+        // println!("{from} sending {message:?} to {address}");
         let message = message.into();
         let inner = Arc::clone(&self.inner);
         async move {
@@ -139,7 +140,7 @@ impl<M: Message> Transport for Channel<M> {
                         .map(|r| r.try_into().unwrap_or_else(|_| panic!()));
                     if let Some(result) = result {
                         let should_drop = Self::should_drop(address, from);
-                        println!("{address} replying {result:?} to {from} (drop = {should_drop})");
+                        // println!("{address} replying {result:?} to {from} (drop = {should_drop})");
                         if !should_drop {
                             //Self::random_delay(1..50).await;
                             break result;
@@ -155,7 +156,7 @@ impl<M: Message> Transport for Channel<M> {
     fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + Debug) {
         let from = self.address;
         let should_drop = Self::should_drop(self.address, address);
-        println!("{from} do-sending {message:?} to {address} (drop = {should_drop})");
+        // println!("{from} do-sending {message:?} to {address} (drop = {should_drop})");
         let message = message.into();
         let inner = self.inner.read().unwrap();
         let callback = inner.callbacks.get(address).map(Arc::clone);

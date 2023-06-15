@@ -67,7 +67,7 @@ impl<
                     .insert(*transaction_id, (*commit, transaction.clone(), false));
                 self.inner.abort(*transaction_id);
             }
-            _ => unreachable!(),
+            _ => unreachable!("unexpected {op:?}"),
         }
     }
 
@@ -121,12 +121,10 @@ impl<
                         if !self.inner.prepared.contains_key(transaction_id)
                             && !self.transaction_log.contains_key(transaction_id)
                         {
-                            self.inner.prepared.insert(
-                                *transaction_id,
-                                (*commit, transaction.clone(), Default::default()),
-                            );
+                            self.inner
+                                .add_prepared(*transaction_id, transaction.clone(), *commit);
                         }
-                    } else if self.inner.prepared.remove(&transaction_id).is_some()
+                    } else if self.inner.remove_prepared(*transaction_id)
                         && matches!(entry.result, Some(Reply::Prepare(OccPrepareResult::NoVote)))
                         && !self.transaction_log.contains_key(&transaction_id)
                     {
@@ -186,7 +184,7 @@ impl<
                     transaction,
                     ..
                 } => {
-                    self.inner.prepared.remove(transaction_id);
+                    self.inner.remove_prepared(*transaction_id);
                     self.no_vote_list.remove(transaction_id);
                 }
                 Request::Get { .. } => {

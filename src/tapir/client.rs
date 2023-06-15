@@ -91,12 +91,16 @@ impl<
                     if new_time != timestamp.time {
                         timestamp.time = new_time;
                         remaining_tries = new_remaining_tries;
-                        panic!("Retry code path was executed");
                         continue;
                     }
                 }
                 let ok = matches!(result, OccPrepareResult::Ok);
                 inner.end(timestamp, ok).await;
+
+                if ok && remaining_tries != 3 {
+                    println!("Retry actually worked!");
+                }
+
                 return Some(timestamp).filter(|_| ok);
             }
         }

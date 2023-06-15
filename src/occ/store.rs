@@ -11,6 +11,10 @@ pub(crate) struct Store<K, V, TS> {
     linearizable: bool,
     inner: MvccStore<K, V, TS>,
     pub(crate) prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, CoordinatorViewNumber)>,
+    // Cache.
+    prepared_reads: HashMap<K, BTreeMap<TS, ()>>,
+    // Cache.
+    prepared_writes: HashMap<K, BTreeMap<TS, ()>>,
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
@@ -33,6 +37,8 @@ impl<K, V, TS> Store<K, V, TS> {
             linearizable,
             inner: Default::default(),
             prepared: Default::default(),
+            prepared_reads: Default::default(),
+            prepared_writes: Default::default(),
         }
     }
 }
@@ -63,14 +69,11 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
                 return PrepareResult::Ok;
             } else {
                 // Run the checks again for a new timestamp.
-                occupied.remove();
+                self.remove_prepared(id);
             }
         }
 
-        let prepared_reads = self.prepared_reads();
-        let prepared_writes = self.prepared_writes();
-
-        println!("pr = {prepared_reads:?}, pw = {prepared_writes:?}");
+        // println!("pr = {prepared_reads:?}, pw = {prepared_writes:?}");
 
         // Check for conflicts with the read set.
         for (key, read) in &transaction.read_set {
@@ -97,7 +100,7 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
             }
 
             // There may be a pending write that would invalidate the read version.
-            if let Some(writes) = prepared_writes.get(key) {
+            if let Some(writes) = self.prepared_writes.get(key) {
                 if self.linearizable
                     || writes
                         .range((Bound::Excluded(*read), Bound::Excluded(commit)))
@@ -137,14 +140,14 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
                 }
             }
 
-            if self.linearizable && let Some(writes) = prepared_writes.get(key) {
+            if self.linearizable && let Some(writes) = self.prepared_writes.get(key) {
                 if let Some(write) = writes.lower_bound(Bound::Excluded(&commit)).key() {
                     // Write conflicts with later prepared write.
                     return PrepareResult::Retry { proposed: write.time() };
                 }
             }
 
-            if let Some(reads) = prepared_reads.get(key) {
+            if let Some(reads) = self.prepared_reads.get(key) {
                 if reads.lower_bound(Bound::Excluded(&commit)).key().is_some() {
                     // Write conflicts with later prepared read.
                     return PrepareResult::Abstain;
@@ -152,8 +155,7 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
             }
         }
 
-        self.prepared
-            .insert(id, (commit, transaction, Default::default()));
+        self.add_prepared(id, transaction, commit);
 
         PrepareResult::Ok
     }
@@ -173,35 +175,77 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
         }
 
         // Note: Transaction may not be in the prepared list of this particular replica, and that's okay.
-        self.prepared.remove(&id);
+        self.remove_prepared(id);
     }
 
     pub(crate) fn abort(&mut self, id: TransactionId) {
         // Note: Transaction may not be in the prepared list of this particular replica, and that's okay.
-        self.prepared.remove(&id);
+        self.remove_prepared(id);
     }
 
     pub(crate) fn put(&mut self, key: K, value: Option<V>, timestamp: TS) {
         self.inner.put(key, value, timestamp);
     }
 
-    pub(crate) fn prepared_reads(&self) -> HashMap<&K, BTreeMap<TS, ()>> {
-        let mut ret: HashMap<&K, BTreeMap<TS, ()>> = HashMap::default();
-        for (_, (timestamp, transaction, _)) in &self.prepared {
-            for key in transaction.read_set.keys() {
-                ret.entry(key).or_default().insert(*timestamp, ());
+    pub(crate) fn add_prepared(
+        &mut self,
+        id: TransactionId,
+        transaction: Transaction<K, V, TS>,
+        commit: TS,
+    ) {
+        for key in transaction.read_set.keys() {
+            self.prepared_reads
+                .entry(key.clone())
+                .or_default()
+                .insert(commit, ());
+        }
+        for key in transaction.write_set.keys() {
+            self.prepared_writes
+                .entry(key.clone())
+                .or_default()
+                .insert(commit, ());
+        }
+
+        if let Some((old_commit, transaction, _)) = self
+            .prepared
+            .insert(id, (commit, transaction, Default::default()))
+        {
+            if old_commit != commit {
+                self.remove_prepared_inner(id, transaction, old_commit);
             }
         }
-        ret
     }
 
-    pub(crate) fn prepared_writes(&self) -> HashMap<&K, BTreeMap<TS, ()>> {
-        let mut ret: HashMap<&K, BTreeMap<TS, ()>> = HashMap::default();
-        for (_, (timestamp, transaction, _)) in &self.prepared {
-            for key in transaction.write_set.keys() {
-                ret.entry(key).or_default().insert(*timestamp, ());
+    pub(crate) fn remove_prepared(&mut self, id: TransactionId) -> bool {
+        if let Some((commit, transaction, _)) = self.prepared.remove(&id) {
+            self.remove_prepared_inner(id, transaction, commit);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn remove_prepared_inner(
+        &mut self,
+        id: TransactionId,
+        transaction: Transaction<K, V, TS>,
+        commit: TS,
+    ) {
+        for key in transaction.read_set.into_keys() {
+            if let Entry::Occupied(mut occupied) = self.prepared_reads.entry(key) {
+                occupied.get_mut().remove(&commit);
+                if occupied.get().is_empty() {
+                    occupied.remove();
+                }
             }
         }
-        ret
+        for key in transaction.write_set.into_keys() {
+            if let Entry::Occupied(mut occupied) = self.prepared_writes.entry(key) {
+                occupied.get_mut().remove(&commit);
+                if occupied.get().is_empty() {
+                    occupied.remove();
+                }
+            }
+        }
     }
 }

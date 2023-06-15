@@ -32,7 +32,8 @@ impl Id {
     fn new() -> Self {
         let mut rng = thread_rng();
         Self(if cfg!(debug_assertions) {
-            rng.gen_range(0..100000)
+            static ID: AtomicU64 = AtomicU64::new(0);
+            ID.fetch_add(1, Ordering::Relaxed)
         } else {
             rng.gen()
         })
@@ -212,7 +213,7 @@ impl<
                     continue;
                 }
 
-                println!("finalizing to membership: {:?}", sync.membership);
+                // println!("finalizing to membership: {:?}", sync.membership);
                 for (_, address) in &sync.membership {
                     inner
                         .transport
@@ -310,9 +311,9 @@ impl<
 
                 let membership_size = sync.membership.size();
                 let finalized = get_finalized(&results);
-                println!("checking quorum: {}", finalized.is_some());
+                //println!("checking quorum: {}", finalized.is_some());
                 if finalized.is_none() && let Some((_, result)) = get_quorum(membership_size, &results, true) {
-                    println!("fast path");
+                    //println!("fast path");
 
                     // Fast path.
                     for (_, address) in &sync.membership {
@@ -342,7 +343,7 @@ impl<
                         ), Some(view_number))
                     })
                 }) {
-                    println!("slow/finalized path");
+                    // println!("slow/finalized path");
 
                     fn get_quorum_view(membership: MembershipSize, results: &HashMap<ReplicaIndex, Confirm>) -> Option<ViewNumber> {
                         let threshold = membership.f_plus_one();
@@ -388,7 +389,7 @@ impl<
                         return result;
                     }
                 } else {
-                    println!("no quorum");
+                    // println!("no quorum");
                 }
             }
         }

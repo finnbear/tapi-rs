@@ -272,7 +272,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                             state,
                         }));
                     } else {
-                        println!("{:?} no consensus result", self.index);
+                        // println!("{:?} no consensus result", self.index);
                     }
                 } else {
                     //println!("{:?} abnormal", self.index);

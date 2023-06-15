@@ -110,8 +110,9 @@ impl<
             }
             drop(lock);
 
+            use rand::Rng;
             let future = client.invoke_unlogged(
-                IrReplicaIndex(0),
+                IrReplicaIndex(rand::thread_rng().gen_range(0..3)),
                 Request::Get {
                     key: key.clone(),
                     timestamp: None,

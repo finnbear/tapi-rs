@@ -1,4 +1,5 @@
 use futures::future::join_all;
+use rand::{thread_rng, Rng};
 
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
@@ -9,7 +10,10 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -36,6 +40,7 @@ type Transport = ChannelTransport<Message>;
 fn build_kv(
     linearizable: bool,
     num_replicas: usize,
+    num_clients: usize,
 ) -> (
     Vec<Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<Message>>>>,
     Vec<Arc<TapirClient<K, V, ChannelTransport<Message>>>>,
@@ -81,7 +86,7 @@ fn build_kv(
         )
     }
 
-    let clients = (0..2)
+    let clients = (0..num_clients)
         .map(|_| create_client(&registry, &membership))
         .collect::<Vec<_>>();
 
@@ -89,7 +94,7 @@ fn build_kv(
 }
 
 async fn rwr(linearizable: bool, num_replicas: usize) {
-    let (replicas, clients) = build_kv(linearizable, num_replicas);
+    let (replicas, clients) = build_kv(linearizable, num_replicas, 2);
 
     let txn = clients[0].begin();
     assert_eq!(txn.get(0).await, None);
@@ -135,7 +140,7 @@ async fn increment_sequential_7() {
 }
 
 async fn increment_sequential(num_replicas: usize) {
-    let (replicas, clients) = build_kv(true, num_replicas);
+    let (replicas, clients) = build_kv(true, num_replicas, 1);
 
     let mut committed = 0;
     for _ in 0..10 {
@@ -168,7 +173,7 @@ async fn increment_parallel_7() {
 }
 
 async fn increment_parallel(num_replicas: usize) {
-    let (replicas, clients) = build_kv(true, num_replicas);
+    let (replicas, clients) = build_kv(true, num_replicas, 2);
 
     let add = || async {
         let txn = clients[0].begin();
@@ -189,4 +194,66 @@ async fn increment_parallel(num_replicas: usize) {
     let result = txn.get(0).await.unwrap_or_default();
     eprintln!("INCREMENT TEST result={result} committed={committed}");
     println!("{} {}", txn.commit().await.is_some(), result == committed);
+}
+
+#[tokio::test]
+async fn throughput_3_ser() {
+    throughput(false, 3, 100000).await;
+}
+
+async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize) {
+    let local = tokio::task::LocalSet::new();
+
+    // Run the local task set.
+    local
+        .run_until(async move {
+            let (replicas, clients) = build_kv(linearizable, num_replicas, num_clients);
+
+            let mut attempted = Arc::new(AtomicU64::new(0));
+            let mut committed = Arc::new(AtomicU64::new(0));
+
+            for client in clients {
+                let attempted = Arc::clone(&attempted);
+                let committed = Arc::clone(&committed);
+                tokio::task::spawn_local(async move {
+                    let attempted = Arc::clone(&attempted);
+                    let committed = Arc::clone(&committed);
+                    loop {
+                        let i = thread_rng().gen_range(0..num_clients as i64 * 5); // thread_rng().gen::<i64>();
+                        let txn = client.begin();
+                        let old = txn.get(i).await.unwrap_or_default();
+                        txn.put(i, Some(old + 1));
+                        let c = txn.commit().await.is_some() as u64;
+                        attempted.fetch_add(1, Ordering::Relaxed);
+                        committed.fetch_add(c, Ordering::Relaxed);
+
+                        tokio::time::sleep(Duration::from_millis(thread_rng().gen_range(1..1000)))
+                            .await;
+                    }
+                });
+            }
+
+            let guard = pprof::ProfilerGuardBuilder::default()
+                .frequency(1000)
+                .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+                .build()
+                .unwrap();
+
+            for _ in 0..10 {
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+
+                let a = attempted.swap(0, Ordering::Relaxed);
+                let c = committed.swap(0, Ordering::Relaxed);
+
+                println!("TPUT {a}, {c}");
+            }
+
+            if let Ok(report) = guard.report().build() {
+                let file = std::fs::File::create("flamegraph.svg").unwrap();
+                let mut options = pprof::flamegraph::Options::default();
+                options.image_width = Some(2500);
+                report.flamegraph_with_options(file, &mut options).unwrap();
+            };
+        })
+        .await;
 }
