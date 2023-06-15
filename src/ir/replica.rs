@@ -373,10 +373,19 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     for r in latest_records {
                                         for (op_id, entry) in r.entries.clone() {
                                             if entry.consistency.is_inconsistent() {
-                                                R.entries.entry(op_id).or_insert(entry);
+                                                match R.entries.entry(op_id) {
+                                                    Entry::Vacant(vacant) => {
+                                                        vacant.insert(entry);
+                                                    }
+                                                    Entry::Occupied(mut occupied) => {
+                                                        if entry.state.is_finalized() {
+                                                            occupied.get_mut().state = RecordEntryState::Finalized;
+                                                        }
+                                                    }
+                                                }
                                             } else if entry.state.is_finalized() {
                                                 debug_assert!(entry.consistency.is_consensus());
-                                                R.entries.entry(op_id).or_insert(entry);
+                                                R.entries.insert(op_id, entry);
                                                 finalized.insert(op_id);
                                                 entries_by_opid.remove(&op_id);
                                             } else  {
@@ -423,6 +432,9 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                             u.extend(entries.into_iter().map(|e| (op_id, e.op, e.result)));
                                         }
                                     }
+
+                                    println!("d = {d:?}");
+                                    println!("u = {u:?}");
 
                                     {
                                         let sync = &mut *sync;

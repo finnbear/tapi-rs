@@ -137,18 +137,19 @@ impl<
                     transaction,
                     commit,
                 } => {
+                    self.inner
+                        .commit(*transaction_id, transaction.clone(), *commit);
                     self.transaction_log
                         .insert(*transaction_id, (*commit, transaction.clone(), true));
-                    self.inner.prepared.remove(transaction_id);
                 }
                 Request::Abort {
                     transaction_id,
                     transaction,
                     commit,
                 } => {
+                    self.inner.abort(*transaction_id);
                     self.transaction_log
                         .insert(*transaction_id, (*commit, transaction.clone(), false));
-                    self.inner.prepared.remove(transaction_id);
                 }
                 Request::Get { .. } => {
                     debug_assert!(false, "these are not replicated");
