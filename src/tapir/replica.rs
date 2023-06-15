@@ -238,16 +238,6 @@ impl<
                     transaction_id,
                     transaction,
                     commit,
-                }
-                | Request::Commit {
-                    transaction_id,
-                    transaction,
-                    commit,
-                }
-                | Request::Abort {
-                    transaction_id,
-                    transaction,
-                    commit,
                 } => {
                     ret.insert(
                         *op_id,
@@ -259,7 +249,7 @@ impl<
                         }),
                     );
                 }
-                Request::Get { .. } => {
+                _ => {
                     debug_assert!(false);
                 }
             }

@@ -16,7 +16,7 @@ use std::{
 #[tokio::test]
 async fn test_kv() {
     for _ in 0..500 {
-        for replicas in (3..=3/* 11 */).step_by(2) {
+        for replicas in (3..=7/* 11 */).step_by(2) {
             increment_parallel(replicas).await;
             increment_sequential(replicas).await;
             for linearizable in [false, true] {
@@ -127,11 +127,19 @@ async fn increment_sequential_3() {
     increment_sequential(3).await;
 }
 
+#[tokio::test]
+async fn increment_sequential_7() {
+    for _ in 0..1000 {
+        increment_sequential(7).await;
+    }
+}
+
 async fn increment_sequential(num_replicas: usize) {
     let (replicas, clients) = build_kv(true, num_replicas);
 
     let mut committed = 0;
     for _ in 0..10 {
+        println!("^^^^^^^^^^^^^^^^^^^ BEGINNING TXN");
         let txn = clients[0].begin();
         let old = txn.get(0).await.unwrap_or_default();
         txn.put(0, Some(old + 1));
@@ -150,6 +158,13 @@ async fn increment_sequential(num_replicas: usize) {
 #[tokio::test]
 async fn increment_parallel_3() {
     increment_parallel(3).await;
+}
+
+#[tokio::test]
+async fn increment_parallel_7() {
+    for _ in 0..1000 {
+        increment_parallel(7).await;
+    }
 }
 
 async fn increment_parallel(num_replicas: usize) {

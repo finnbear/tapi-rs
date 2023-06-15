@@ -363,24 +363,27 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     if sync.latest_normal_view == latest_normal_view {
                                         latest_records.push(sync.record.clone());
                                     }
-                                    println!("have {} latest", latest_records.len());
+                                    println!("have {} latest: {latest_records:?}", latest_records.len());
 
                                     #[allow(non_snake_case)]
                                     let mut R = Record::default();
                                     let mut entries_by_opid =
                                         HashMap::<OpId, Vec<RecordEntry<U::Op, U::Result>>>::new();
+                                    let mut finalized = HashSet::new();
                                     for r in latest_records {
                                         for (op_id, entry) in r.entries.clone() {
                                             if entry.consistency.is_inconsistent() {
                                                 R.entries.entry(op_id).or_insert(entry);
                                             } else if entry.state.is_finalized() {
+                                                debug_assert!(entry.consistency.is_consensus());
                                                 R.entries.entry(op_id).or_insert(entry);
+                                                finalized.insert(op_id);
                                                 entries_by_opid.remove(&op_id);
-                                            } else {
-                                                assert!(entry.consistency.is_consensus());
-                                                assert!(entry.state.is_tentative());
+                                            } else  {
+                                                debug_assert!(entry.consistency.is_consensus());
+                                                debug_assert!(entry.state.is_tentative());
 
-                                                if !R.entries.contains_key(&op_id) {
+                                                if !finalized.contains(&op_id) {
                                                     entries_by_opid
                                                         .entry(op_id)
                                                         .or_default()
@@ -429,10 +432,12 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     let results_by_opid =
                                         sync.upcalls.merge(d, u);
 
-                                    //let mut merged = Record::default();
+                                    debug_assert_eq!(results_by_opid.len(), entries_by_opid.len());
+
                                     for (op_id, result) in results_by_opid {
                                         let mut entries = entries_by_opid.get(&op_id).unwrap();
                                         let entry = &entries[0];
+                                        debug_assert!(entry.consistency.is_consensus());
                                         R.entries.insert(
                                             op_id,
                                             RecordEntry {
