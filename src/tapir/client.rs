@@ -74,8 +74,9 @@ impl<
         }
 
         let inner = self.inner.clone();
+        let min_commit_timestamp = inner.max_read_timestamp().saturating_add(1);
         let mut timestamp = Timestamp {
-            time: get_time().max(inner.max_read_timestamp().saturating_add(1)),
+            time: get_time().max(min_commit_timestamp),
             client_id: self.inner.client.id(),
         };
 
@@ -86,10 +87,13 @@ impl<
                 let result = inner.prepare(timestamp).await;
 
                 if let OccPrepareResult::Retry { proposed } = &result && let Some(new_remaining_tries) = remaining_tries.checked_sub(1) {
-                    timestamp.time = get_time().max(proposed.saturating_add(1));
-                    remaining_tries = new_remaining_tries;
-                    panic!("Retry code path was executed");
-                    continue;
+                    let new_time = get_time().max(proposed.saturating_add(1)).max(min_commit_timestamp);
+                    if new_time != timestamp.time {
+                        timestamp.time = new_time;
+                        remaining_tries = new_remaining_tries;
+                        panic!("Retry code path was executed");
+                        continue;
+                    }
                 }
                 let ok = matches!(result, OccPrepareResult::Ok);
                 inner.end(timestamp, ok).await;
