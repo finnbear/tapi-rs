@@ -64,24 +64,37 @@ impl<
     }
 
     pub(crate) fn commit(&self) -> impl Future<Output = Option<Timestamp>> {
+        fn get_time() -> u64 {
+            use rand::Rng;
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64
+                + rand::thread_rng().gen_range(0..100 * 1000 * 1000)
+        }
+
         let inner = self.inner.clone();
-        let time = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
-        let timestamp = Timestamp {
-            time,
+        let mut timestamp = Timestamp {
+            time: get_time().max(inner.max_read_timestamp().saturating_add(1)),
             client_id: self.inner.client.id(),
         };
-        let future = inner.prepare(timestamp);
 
         async move {
-            let result = future.await;
-            println!("COMMITTING {:?}", result);
-            // TODO: retries.
-            let ok = matches!(result, OccPrepareResult::Ok);
-            inner.end(timestamp, ok).await;
-            Some(timestamp).filter(|_| ok)
+            let mut remaining_tries = 3u8;
+
+            loop {
+                let result = inner.prepare(timestamp).await;
+
+                if let OccPrepareResult::Retry { proposed } = &result && let Some(new_remaining_tries) = remaining_tries.checked_sub(1) {
+                    timestamp.time = get_time().max(proposed.saturating_add(1));
+                    remaining_tries = new_remaining_tries;
+                    panic!("Retry code path was executed");
+                    continue;
+                }
+                let ok = matches!(result, OccPrepareResult::Ok);
+                inner.end(timestamp, ok).await;
+                return Some(timestamp).filter(|_| ok);
+            }
         }
     }
 }

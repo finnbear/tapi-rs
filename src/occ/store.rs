@@ -74,6 +74,13 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
 
         // Check for conflicts with the read set.
         for (key, read) in &transaction.read_set {
+            if *read > commit {
+                debug_assert!(false, "client picked too low commit timestamp for read");
+                return PrepareResult::Retry {
+                    proposed: read.time(),
+                };
+            }
+
             // If we don't have this key then no conflicts for read.
             let (beginning, end) = self.inner.get_range(key, *read);
 

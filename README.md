@@ -20,6 +20,7 @@ Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-
   - [x] Abort
   - [x] Optional linearizability
   - [x] IR sync & merge
+  - [x] Prepare retries
   - [ ] Sharding
   - [ ] Cooperative termination
   - [ ] Garbage collection of OCC versions

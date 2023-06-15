@@ -80,6 +80,18 @@ impl<
         }
     }
 
+    pub(crate) fn max_read_timestamp(&self) -> u64 {
+        self.inner
+            .lock()
+            .unwrap()
+            .inner
+            .read_set
+            .values()
+            .map(|v| v.time)
+            .max()
+            .unwrap_or_default()
+    }
+
     pub(crate) fn get(&self, key: K) -> impl Future<Output = Option<V>> {
         let client = self.client.clone();
         let inner = Arc::clone(&self.inner);

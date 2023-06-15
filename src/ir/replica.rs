@@ -363,7 +363,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     if sync.latest_normal_view == latest_normal_view {
                                         latest_records.push(sync.record.clone());
                                     }
-                                    println!("have {} latest: {latest_records:?}", latest_records.len());
+                                    println!("have {} latest", latest_records.len());
 
                                     #[allow(non_snake_case)]
                                     let mut R = Record::default();
@@ -433,8 +433,8 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                         }
                                     }
 
-                                    println!("d = {d:?}");
-                                    println!("u = {u:?}");
+                                    // println!("d = {d:?}");
+                                    // println!("u = {u:?}");
 
                                     {
                                         let sync = &mut *sync;
