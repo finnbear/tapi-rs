@@ -121,9 +121,10 @@ impl<
                         if !self.inner.prepared.contains_key(transaction_id)
                             && !self.transaction_log.contains_key(transaction_id)
                         {
-                            self.inner
-                                .prepared
-                                .insert(*transaction_id, (*commit, transaction.clone()));
+                            self.inner.prepared.insert(
+                                *transaction_id,
+                                (*commit, transaction.clone(), Default::default()),
+                            );
                         }
                     } else if self.inner.prepared.remove(&transaction_id).is_some()
                         && matches!(entry.result, Some(Reply::Prepare(OccPrepareResult::NoVote)))

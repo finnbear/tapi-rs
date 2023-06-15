@@ -1,4 +1,4 @@
-use super::{Timestamp, Transaction, TransactionId};
+use super::{CoordinatorViewNumber, Timestamp, Transaction, TransactionId};
 use crate::MvccStore;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -10,7 +10,7 @@ use std::{borrow::Borrow, collections::HashMap};
 pub(crate) struct Store<K, V, TS> {
     linearizable: bool,
     inner: MvccStore<K, V, TS>,
-    pub(crate) prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>)>,
+    pub(crate) prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, CoordinatorViewNumber)>,
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
@@ -152,7 +152,8 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
             }
         }
 
-        self.prepared.insert(id, (commit, transaction));
+        self.prepared
+            .insert(id, (commit, transaction, Default::default()));
 
         PrepareResult::Ok
     }
@@ -186,7 +187,7 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
 
     pub(crate) fn prepared_reads(&self) -> HashMap<&K, BTreeMap<TS, ()>> {
         let mut ret: HashMap<&K, BTreeMap<TS, ()>> = HashMap::default();
-        for (_, (timestamp, transaction)) in &self.prepared {
+        for (_, (timestamp, transaction, _)) in &self.prepared {
             for key in transaction.read_set.keys() {
                 ret.entry(key).or_default().insert(*timestamp, ());
             }
@@ -196,7 +197,7 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
 
     pub(crate) fn prepared_writes(&self) -> HashMap<&K, BTreeMap<TS, ()>> {
         let mut ret: HashMap<&K, BTreeMap<TS, ()>> = HashMap::default();
-        for (_, (timestamp, transaction)) in &self.prepared {
+        for (_, (timestamp, transaction, _)) in &self.prepared {
             for key in transaction.write_set.keys() {
                 ret.entry(key).or_default().insert(*timestamp, ());
             }

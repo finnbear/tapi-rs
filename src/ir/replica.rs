@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use super::{
     message::ViewChangeAddendum, record::Consistency, Confirm, DoViewChange, FinalizeConsensus,
     FinalizeInconsistent, Membership, Message, OpId, ProposeConsensus, ProposeInconsistent, Record,
-    RecordEntry, RecordEntryState, ReplyConsensus, ReplyInconsistent, RequestUnlogged, StartView,
-    View, ViewNumber,
+    RecordEntry, RecordEntryState, ReplyConsensus, ReplyInconsistent, ReplyUnlogged,
+    RequestUnlogged, StartView, View, ViewNumber,
 };
 use crate::{Transport, TransportMessage};
 use std::{
@@ -223,7 +223,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                 let mut sync = self.inner.sync.lock().unwrap();
                 if sync.status.is_normal() {
                     let result = sync.upcalls.exec_unlogged(op);
-                    return Some(Message::ReplyUnlogged(super::ReplyUnlogged { result }));
+                    return Some(Message::ReplyUnlogged(ReplyUnlogged { result }));
                 }
             }
             Message::ProposeInconsistent(ProposeInconsistent { op_id, op }) => {
