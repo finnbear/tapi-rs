@@ -156,7 +156,7 @@ async fn increment_sequential(num_replicas: usize) {
         Transport::sleep(Duration::from_millis(1000)).await;
     }
 
-    println!("committed = {committed}");
+    eprintln!("committed = {committed}");
     assert!(committed > 0);
 }
 

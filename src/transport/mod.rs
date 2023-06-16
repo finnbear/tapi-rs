@@ -25,7 +25,6 @@ pub trait Transport: Clone + Send + Sync + 'static {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64
-            + rand::thread_rng().gen_range(0..10 * 1000 * 1000)
     }
 
     /// Sleep for duration.

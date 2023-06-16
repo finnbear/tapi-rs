@@ -89,7 +89,7 @@ impl<
                 inner.end(timestamp, ok).await;
 
                 if ok && remaining_tries != 3 {
-                    println!("Retry actually worked!");
+                    eprintln!("Retry actually worked!");
                 }
 
                 return Some(timestamp).filter(|_| ok);

@@ -36,6 +36,7 @@ struct KvNode {
     inner: Option<(Maelstrom, KvNodeInner)>,
 }
 
+#[derive(Clone)]
 enum KvNodeInner {
     Replica(Arc<IrReplica<TapirReplica<K, V>, Maelstrom>>),
     App(Arc<TapirClient<K, V, Maelstrom>>),
@@ -56,7 +57,8 @@ struct Maelstrom {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 struct Wrapper {
     message: Message,
-    reply: Option<u64>,
+    is_reply_to: Option<u64>,
+    do_reply_to: Option<u64>,
 }
 
 struct Inner {
@@ -75,9 +77,9 @@ enum IdEnum {
 impl Display for IdEnum {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Replica(n) => write!(f, "n{n}"),
-            Self::App(n) => write!(f, "n{}", n + 3),
-            Self::Client(n) => write!(f, "c{n}"),
+            Self::Replica(n) => write!(f, "n{}", n + 1),
+            Self::App(n) => write!(f, "n{}", n + 3 + 1),
+            Self::Client(n) => write!(f, "c{}", n + 1),
         }
     }
 }
@@ -86,21 +88,20 @@ impl FromStr for IdEnum {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(if let Some(n) = s.strip_prefix("n") {
-            let n = usize::from_str(n).map_err(|_| ())?;
+            let n = usize::from_str(n).map_err(|_| ())? - 1;
             if n < 3 {
                 Self::Replica(n)
             } else {
-                Self::Client(n - 3)
+                Self::App(n - 3)
             }
         } else {
             let n = s.strip_prefix("c").ok_or(())?;
-            let n = usize::from_str(n).map_err(|_| ())?;
+            let n = usize::from_str(n).map_err(|_| ())? - 1;
             Self::Client(n)
         })
     }
 }
 
-// Msg<LinKv, Message>
 impl Transport for Maelstrom {
     type Address = IdEnum;
     type Message = Message;
@@ -133,16 +134,22 @@ impl Transport for Maelstrom {
         self.inner.requests.lock().unwrap().insert(reply, sender);
         let message = Wrapper {
             message: message.into(),
-            reply: Some(reply),
+            is_reply_to: None,
+            do_reply_to: Some(reply),
         };
+        eprintln!("{id} sending {message:?} to {address}");
         let inner = Arc::clone(&self.inner);
         async move {
             loop {
-                let _ = inner.net.txq.try_send(Msg {
-                    src: id.to_string(),
-                    dest: address.to_string(),
-                    body: Body::Application(message.clone()),
-                });
+                let _ = inner
+                    .net
+                    .txq
+                    .send(Msg {
+                        src: id.to_string(),
+                        dest: address.to_string(),
+                        body: Body::Application(message.clone()),
+                    })
+                    .await;
 
                 let sleep = Self::sleep(Duration::from_secs(1));
 
@@ -161,13 +168,20 @@ impl Transport for Maelstrom {
     fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + std::fmt::Debug) {
         let message = Wrapper {
             message: message.into(),
-            reply: None,
+            do_reply_to: None,
+            is_reply_to: None,
         };
-        let _ = self.inner.net.txq.try_send(Msg {
-            src: self.id.to_string(),
-            dest: address.to_string(),
-            body: Body::Application(message),
-        });
+        //eprintln!("{} do-sending {message:?} to {address}", self.id);
+        let _ = self
+            .inner
+            .net
+            .txq
+            .send_blocking(Msg {
+                src: self.id.to_string(),
+                dest: address.to_string(),
+                body: Body::Application(message),
+            })
+            .unwrap();
     }
 }
 
@@ -204,7 +218,7 @@ impl Process<LinKv, Wrapper> for KvNode {
                 IdEnum::App(_) => {
                     KvNodeInner::App(Arc::new(TapirClient::new(membership, transport)))
                 }
-                _ => panic!(),
+                id => panic!("{id}"),
             },
         ));
     }
@@ -212,41 +226,204 @@ impl Process<LinKv, Wrapper> for KvNode {
     async fn run(&self) -> Status {
         let (transport, inner) = self.inner.as_ref().unwrap();
         loop {
+            eprintln!("RECEIVING");
             match transport.inner.net.rxq.recv().await {
                 Ok(Msg { src, body, .. }) => {
-                    match body {
-                        Body::Application(app) => {
-                            if let Some(reply) = app.reply {
-                                let mut requests = transport.inner.requests.lock().unwrap();
-                                if let Some(sender) = requests.remove(&reply) {
-                                    let _ = sender.send(app.message);
-                                }
-                            } else {
-                                if let KvNodeInner::Replica(replica) = &inner {
-                                    replica.receive(src.parse::<IdEnum>().unwrap(), app.message);
+                    eprintln!("received {body:?} from {src}");
+                    let transport = transport.clone();
+                    let inner = inner.clone();
+                    tokio::spawn(async move {
+                        match body {
+                            Body::Application(app) => {
+                                if let Some(reply) = app.is_reply_to {
+                                    let mut requests = transport.inner.requests.lock().unwrap();
+                                    if let Some(sender) = requests.remove(&reply) {
+                                        eprintln!("is reply");
+                                        let _ = sender.send(app.message);
+                                    } else {
+                                        eprintln!("duplicate reply");
+                                    }
                                 } else {
-                                    unreachable!();
-                                };
+                                    if let KvNodeInner::Replica(replica) = &inner {
+                                        if let Some(response) = replica
+                                            .receive(src.parse::<IdEnum>().unwrap(), app.message)
+                                        {
+                                            let response = Msg {
+                                                src: transport.id.to_string(),
+                                                dest: src.clone(),
+                                                body: Body::Application(Wrapper {
+                                                    message: response,
+                                                    do_reply_to: None,
+                                                    is_reply_to: app.do_reply_to,
+                                                }),
+                                            };
+                                            eprintln!("sending response {response:?}");
+                                            let _ = transport
+                                                .inner
+                                                .net
+                                                .txq
+                                                .send(response)
+                                                .await
+                                                .unwrap();
+                                        } else {
+                                            eprintln!("NO RESPONSE");
+                                        }
+                                    } else {
+                                        unreachable!();
+                                    };
+                                }
                             }
-                        }
-                        Body::Workload(work) => {
-                            if let KvNodeInner::App(app) = &inner {
-                                let txn = app.begin();
-                                match work {
-                                    LinKv::Cas {
-                                        msg_id,
-                                        key,
-                                        from,
-                                        to,
-                                    } => {
-                                        let key = serde_json::to_string(&key).unwrap();
-                                        let old = txn
-                                            .get(key.clone())
-                                            .await
-                                            .map(|s| serde_json::from_str(&s).unwrap());
-                                        if old == Some(from) {
-                                            let to = serde_json::to_string(&to).unwrap();
-                                            txn.put(key, Some(to));
+                            Body::Workload(work) => {
+                                if let KvNodeInner::App(app) = &inner {
+                                    let txn = app.begin();
+                                    match work {
+                                        LinKv::Cas {
+                                            msg_id,
+                                            key,
+                                            from,
+                                            to,
+                                        } => {
+                                            let key = serde_json::to_string(&key).unwrap();
+                                            let old = txn
+                                                .get(key.clone())
+                                                .await
+                                                .map(|s| serde_json::from_str(&s).unwrap());
+                                            let swap = old == Some(from);
+                                            if swap {
+                                                let to = serde_json::to_string(&to).unwrap();
+                                                txn.put(key, Some(to));
+                                            }
+
+                                            if txn.commit().await.is_some() {
+                                                if old.is_none() {
+                                                    let _ = transport
+                                                        .inner
+                                                        .net
+                                                        .txq
+                                                        .send(Msg {
+                                                            src: transport.id.to_string(),
+                                                            dest: src,
+                                                            body: Body::Error(Error {
+                                                                in_reply_to: msg_id,
+                                                                text: String::from(
+                                                                    "cas key not found",
+                                                                ),
+                                                                code: 20,
+                                                            }),
+                                                        })
+                                                        .await;
+                                                } else if swap {
+                                                    let _ = transport
+                                                        .inner
+                                                        .net
+                                                        .txq
+                                                        .send(Msg {
+                                                            src: transport.id.to_string(),
+                                                            dest: src,
+                                                            body: Body::Workload(LinKv::CasOk {
+                                                                in_reply_to: msg_id,
+                                                                msg_id: Some(
+                                                                    transport.next_msg_id(),
+                                                                ),
+                                                            }),
+                                                        })
+                                                        .await;
+                                                } else {
+                                                    let _ = transport
+                                                        .inner
+                                                        .net
+                                                        .txq
+                                                        .send(Msg {
+                                                            src: transport.id.to_string(),
+                                                            dest: src,
+                                                            body: Body::Error(Error {
+                                                                in_reply_to: msg_id,
+                                                                text: String::from(
+                                                                    "cas precondition failed",
+                                                                ),
+                                                                code: 22,
+                                                            }),
+                                                        })
+                                                        .await;
+                                                }
+                                            } else {
+                                                let _ = transport
+                                                    .inner
+                                                    .net
+                                                    .txq
+                                                    .send(Msg {
+                                                        src: transport.id.to_string(),
+                                                        dest: src,
+                                                        body: Body::Error(Error {
+                                                            in_reply_to: msg_id,
+                                                            text: String::from("cas txn conflict"),
+                                                            code: 30,
+                                                        }),
+                                                    })
+                                                    .await;
+                                            }
+                                        }
+                                        LinKv::Read { msg_id, key } => {
+                                            let key = serde_json::to_string(&key).unwrap();
+                                            let old = txn.get(key.clone()).await.map(|s| {
+                                                serde_json::from_str::<serde_json::Value>(&s)
+                                                    .unwrap()
+                                            });
+                                            if txn.commit().await.is_some() {
+                                                if let Some(old) = old {
+                                                    let _ = transport
+                                                        .inner
+                                                        .net
+                                                        .txq
+                                                        .send(Msg {
+                                                            src: transport.id.to_string(),
+                                                            dest: src,
+                                                            body: Body::Workload(LinKv::ReadOk {
+                                                                in_reply_to: msg_id,
+                                                                msg_id: Some(
+                                                                    transport.next_msg_id(),
+                                                                ),
+                                                                value: old,
+                                                            }),
+                                                        })
+                                                        .await;
+                                                } else {
+                                                    let _ = transport
+                                                        .inner
+                                                        .net
+                                                        .txq
+                                                        .send(Msg {
+                                                            src: transport.id.to_string(),
+                                                            dest: src,
+                                                            body: Body::Error(Error {
+                                                                in_reply_to: msg_id,
+                                                                text: String::from("not found"),
+                                                                code: 20,
+                                                            }),
+                                                        })
+                                                        .await;
+                                                }
+                                            } else {
+                                                let _ = transport
+                                                    .inner
+                                                    .net
+                                                    .txq
+                                                    .send(Msg {
+                                                        src: transport.id.to_string(),
+                                                        dest: src,
+                                                        body: Body::Error(Error {
+                                                            in_reply_to: msg_id,
+                                                            text: String::from("read txn conflict"),
+                                                            code: 30,
+                                                        }),
+                                                    })
+                                                    .await;
+                                            }
+                                        }
+                                        LinKv::Write { msg_id, key, value } => {
+                                            let key = serde_json::to_string(&key).unwrap();
+                                            let value = serde_json::to_string(&value).unwrap();
+                                            txn.put(key, Some(value));
                                             if txn.commit().await.is_some() {
                                                 let _ = transport
                                                     .inner
@@ -255,9 +432,8 @@ impl Process<LinKv, Wrapper> for KvNode {
                                                     .send(Msg {
                                                         src: transport.id.to_string(),
                                                         dest: src,
-                                                        body: Body::Workload(LinKv::CasOk {
+                                                        body: Body::Workload(LinKv::WriteOk {
                                                             in_reply_to: msg_id,
-                                                            msg_id: Some(transport.next_msg_id()),
                                                         }),
                                                     })
                                                     .await;
@@ -271,111 +447,42 @@ impl Process<LinKv, Wrapper> for KvNode {
                                                         dest: src,
                                                         body: Body::Error(Error {
                                                             in_reply_to: msg_id,
-                                                            text: String::from("CaS fail"),
-                                                            code: 13,
+                                                            text: String::from("read txn conflict"),
+                                                            code: 30,
                                                         }),
                                                     })
                                                     .await;
                                             }
-                                        } else {
-                                            let _ = transport
-                                                .inner
-                                                .net
-                                                .txq
-                                                .send(Msg {
-                                                    src: transport.id.to_string(),
-                                                    dest: src,
-                                                    body: Body::Error(Error {
-                                                        in_reply_to: msg_id,
-                                                        text: String::from("CaS fail"),
-                                                        code: 13,
-                                                    }),
-                                                })
-                                                .await;
                                         }
+                                        _ => unreachable!(),
                                     }
-                                    LinKv::Read { msg_id, key } => {
-                                        let key = serde_json::to_string(&key).unwrap();
-                                        let old = txn.get(key.clone()).await.map(|s| {
-                                            serde_json::from_str::<serde_json::Value>(&s).unwrap()
-                                        });
-                                        if let Some(old) = old && txn.commit().await.is_some() {
-                                            let _ = transport
-                                            .inner
-                                            .net
-                                            .txq
-                                            .send(Msg {
-                                                src: transport.id.to_string(),
-                                                dest: src,
-                                                body: Body::Workload(LinKv::ReadOk {
-                                                    in_reply_to: msg_id,
-                                                    msg_id: Some(transport.next_msg_id()),
-                                                    value: old
-                                                }),
+                                } else {
+                                    // Proxy...
+                                    eprintln!("Proxying...");
+                                    let _ = transport
+                                        .inner
+                                        .net
+                                        .txq
+                                        .send(Msg {
+                                            src: src.clone(),
+                                            dest: IdEnum::App({
+                                                let n = thread_rng().gen::<usize>();
+                                                n % 2
                                             })
-                                            .await;
-                                        } else {
-                                            let _ = transport
-                                            .inner
-                                            .net
-                                            .txq
-                                            .send(Msg {
-                                                src: transport.id.to_string(),
-                                                dest: src,
-                                                body: Body::Error(Error {
-                                                    in_reply_to: msg_id,
-                                                    text: String::from("read fail"),
-                                                    code: 13,
-                                                }),
-                                            })
-                                            .await;
-                                        }
-                                    }
-                                    LinKv::Write { msg_id, key, value } => {
-                                        let key = serde_json::to_string(&key).unwrap();
-                                        let value = serde_json::to_string(&value).unwrap();
-                                        txn.put(key, Some(value));
-                                        if txn.commit().await.is_some() {
-                                            let _ = transport
-                                                .inner
-                                                .net
-                                                .txq
-                                                .send(Msg {
-                                                    src: transport.id.to_string(),
-                                                    dest: src,
-                                                    body: Body::Workload(LinKv::CasOk {
-                                                        in_reply_to: msg_id,
-                                                        msg_id: Some(transport.next_msg_id()),
-                                                    }),
-                                                })
-                                                .await;
-                                        } else {
-                                            let _ = transport
-                                                .inner
-                                                .net
-                                                .txq
-                                                .send(Msg {
-                                                    src: transport.id.to_string(),
-                                                    dest: src,
-                                                    body: Body::Error(Error {
-                                                        in_reply_to: msg_id,
-                                                        text: String::from("write fail"),
-                                                        code: 13,
-                                                    }),
-                                                })
-                                                .await;
-                                        }
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            } else {
-                                // Ignore.
-                            };
+                                            .to_string(),
+                                            body: Body::Workload(work),
+                                        })
+                                        .await;
+                                };
+                            }
+                            body => unreachable!("{body:?}"),
                         }
-                        body => unreachable!("{body:?}"),
-                    }
+                    });
                 }
-                Err(_) => return Ok(()), // Runtime is shutting down.
+                Err(_) => {
+                    eprintln!("shutting down recv");
+                    return Ok(());
+                } // Runtime is shutting down.
             };
         }
     }

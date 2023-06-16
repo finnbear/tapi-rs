@@ -205,7 +205,7 @@ async fn lock_server(num_replicas: usize) {
     for i in 0..5 {
         ChannelTransport::<Message>::sleep(Duration::from_secs(8)).await;
 
-        println!("@@@@@ INVOKE {replicas:?}");
+        eprintln!("@@@@@ INVOKE {replicas:?}");
         if clients[1]
             .invoke_consensus(Op::Lock(clients[1].id()), &decide_lock)
             .await

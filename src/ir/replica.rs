@@ -182,7 +182,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                     }
                     sync.view.number.0 += 1;
 
-                    println!(
+                    eprintln!(
                         "{my_index:?} timeout sending do view change {}",
                         sync.view.number.0
                     );
@@ -319,6 +319,12 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                         );
                     }
 
+                    eprintln!(
+                        "index = {:?} , leader index = {:?}",
+                        self.index,
+                        sync.view.leader_index()
+                    );
+
                     if self.index == sync.view.leader_index() && let Some(addendum) = msg.addendum.as_ref() {
                         let msg_view_number = msg.view_number;
                         match sync.outstanding_do_view_changes.entry(addendum.replica_index) {
@@ -341,7 +347,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                 .filter(|other| other.view_number == do_view_change.view_number);
 
                             if matching.clone().count() >= threshold {
-                                println!("DOING VIEW CHANGE");
+                                eprintln!("DOING VIEW CHANGE");
                                 {
                                     let latest_normal_view = sync.latest_normal_view.max(
                                         matching
@@ -363,7 +369,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     if sync.latest_normal_view == latest_normal_view {
                                         latest_records.push(sync.record.clone());
                                     }
-                                    println!("have {} latest", latest_records.len());
+                                    eprintln!("have {} latest", latest_records.len());
 
                                     #[allow(non_snake_case)]
                                     let mut R = Record::default();
@@ -492,7 +498,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                 if view_number > sync.view.number
                     || (view_number == sync.view.number || !sync.status.is_normal())
                 {
-                    println!("{:?} starting view {view_number:?}", self.index);
+                    eprintln!("{:?} starting view {view_number:?}", self.index);
                     sync.upcalls.sync(&sync.record, &new_record);
                     sync.record = new_record;
                     sync.status = Status::Normal;
@@ -502,7 +508,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                 }
             }
             _ => {
-                println!("unexpected message");
+                eprintln!("unexpected message");
             }
         }
         None

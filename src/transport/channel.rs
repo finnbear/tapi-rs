@@ -92,6 +92,15 @@ impl<M: Message> Transport for Channel<M> {
         self.address
     }
 
+    fn time(&self) -> u64 {
+        use rand::Rng;
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
+            + rand::thread_rng().gen_range(0..10 * 1000 * 1000)
+    }
+
     fn sleep(duration: Duration) -> Self::Sleep {
         tokio::time::sleep(duration / 10)
     }
@@ -147,7 +156,7 @@ impl<M: Message> Transport for Channel<M> {
                         }
                     }
                 } else {
-                    println!("unknown address {address:?}");
+                    eprintln!("unknown address {address:?}");
                 }
             }
         }
