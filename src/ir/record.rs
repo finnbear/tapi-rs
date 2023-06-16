@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 use super::OpId;
 use std::{collections::HashMap, fmt::Debug};
 
-#[derive(Copy, Clone)]
-pub(crate) enum State {
+#[derive(Copy, Clone, Serialize, Deserialize)]
+pub enum State {
     Finalized,
     Tentative,
 }
@@ -17,17 +19,17 @@ impl Debug for State {
 }
 
 impl State {
-    pub(crate) fn is_tentative(&self) -> bool {
+    pub fn is_tentative(&self) -> bool {
         matches!(self, Self::Tentative)
     }
 
-    pub(crate) fn is_finalized(&self) -> bool {
+    pub fn is_finalized(&self) -> bool {
         matches!(self, Self::Finalized)
     }
 }
 
-#[derive(Copy, Clone)]
-pub(crate) enum Consistency {
+#[derive(Copy, Clone, Serialize, Deserialize)]
+pub enum Consistency {
     Inconsistent,
     Consensus,
 }
@@ -42,26 +44,26 @@ impl Debug for Consistency {
 }
 
 impl Consistency {
-    pub(crate) fn is_inconsistent(&self) -> bool {
+    pub fn is_inconsistent(&self) -> bool {
         matches!(self, Self::Inconsistent)
     }
 
-    pub(crate) fn is_consensus(&self) -> bool {
+    pub fn is_consensus(&self) -> bool {
         matches!(self, Self::Consensus)
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct Entry<O, R> {
-    pub(crate) op: O,
-    pub(crate) consistency: Consistency,
-    pub(crate) result: Option<R>,
-    pub(crate) state: State,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Entry<O, R> {
+    pub op: O,
+    pub consistency: Consistency,
+    pub result: Option<R>,
+    pub state: State,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct Record<O, R> {
-    pub(crate) entries: HashMap<OpId, Entry<O, R>>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Record<O, R> {
+    pub entries: HashMap<OpId, Entry<O, R>>,
 }
 
 impl<O, R> Default for Record<O, R> {

@@ -9,16 +9,16 @@ mod view;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use client::{Client, Id as ClientId};
-pub(crate) use membership::{Membership, Size as MembershipSize};
-pub(crate) use message::{
+pub use client::{Client, Id as ClientId};
+pub use membership::{Membership, Size as MembershipSize};
+pub use message::{
     Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent, Message, ProposeConsensus,
     ProposeInconsistent, ReplyConsensus, ReplyInconsistent, ReplyUnlogged, RequestUnlogged,
     StartView, ViewChangeAddendum,
 };
-pub(crate) use op::Id as OpId;
-pub(crate) use record::{Consistency, Entry as RecordEntry, Record, State as RecordEntryState};
-pub(crate) use replica::{
+pub use op::Id as OpId;
+pub use record::{Consistency, Entry as RecordEntry, Record, State as RecordEntryState};
+pub use replica::{
     Index as ReplicaIndex, Replica, Status as ReplicaStatus, Upcalls as ReplicaUpcalls,
 };
-pub(crate) use view::{Number as ViewNumber, View};
+pub use view::{Number as ViewNumber, View};

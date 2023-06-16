@@ -10,23 +10,21 @@ mod mvcc;
 mod occ;
 mod tapir;
 mod transport;
-pub(crate) mod util;
+pub mod util;
 
-pub(crate) use ir::{
+pub use ir::{
     Client as IrClient, ClientId as IrClientId, Membership as IrMembership,
     MembershipSize as IrMembershipSize, Message as IrMessage, OpId as IrOpId, Record as IrRecord,
     RecordEntry as IrRecordEntry, Replica as IrReplica, ReplicaIndex as IrReplicaIndex,
     ReplicaUpcalls as IrReplicaUpcalls,
 };
-pub(crate) use mvcc::Store as MvccStore;
-pub(crate) use occ::{
+pub use mvcc::Store as MvccStore;
+pub use occ::{
     PrepareResult as OccPrepareResult, Store as OccStore, Timestamp as OccTimestamp,
     Transaction as OccTransaction, TransactionId as OccTransactionId,
 };
-pub(crate) use tapir::{
+pub use tapir::{
     Client as TapirClient, Replica as TapirReplica, Reply as TapirReply, Request as TapirRequest,
 };
-pub(crate) use transport::{
-    Channel as ChannelTransport, ChannelRegistry, Error as TransportError,
-    Message as TransportMessage, Transport,
-};
+pub use transport::{Channel as ChannelTransport, ChannelRegistry};
+pub use transport::{Message as TransportMessage, Transport};

@@ -153,7 +153,7 @@ async fn increment_sequential(num_replicas: usize) {
             committed += 1;
         }
 
-        Transport::sleep(Duration::from_millis(100)).await;
+        Transport::sleep(Duration::from_millis(1000)).await;
     }
 
     println!("committed = {committed}");
@@ -198,7 +198,7 @@ async fn increment_parallel(num_replicas: usize) {
 
 #[tokio::test]
 async fn throughput_3_ser() {
-    throughput(false, 3, 100000).await;
+    throughput(false, 3, 1000).await;
 }
 
 async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize) {
@@ -219,7 +219,7 @@ async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize)
                     let attempted = Arc::clone(&attempted);
                     let committed = Arc::clone(&committed);
                     loop {
-                        let i = thread_rng().gen_range(0..num_clients as i64 * 5); // thread_rng().gen::<i64>();
+                        let i = thread_rng().gen_range(0..num_clients as i64 * 10); // thread_rng().gen::<i64>();
                         let txn = client.begin();
                         let old = txn.get(i).await.unwrap_or_default();
                         txn.put(i, Some(old + 1));

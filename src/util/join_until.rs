@@ -11,9 +11,19 @@ use std::time::Duration;
 use tokio::select;
 
 pin_project! {
-    /// Future for the [`join_n`] function.
+    /// Future for the [`join`] function.
     #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub(crate) struct JoinUntil<K, F: Future, U: Until<K, F::Output>> {
+    pub struct Join<K, F: Future> {
+        #[pin]
+        active: FuturesUnordered<KeyedFuture<K, F>>,
+        output: HashMap<K, F::Output>,
+    }
+}
+
+pin_project! {
+    /// Future for the [`until`] function.
+    #[must_use = "futures do nothing unless you `.await` or poll them"]
+    pub struct JoinUntil<K, F: Future, U: Until<K, F::Output>> {
         #[pin]
         active: FuturesUnordered<KeyedFuture<K, F>>,
         output: HashMap<K, F::Output>,
@@ -21,7 +31,7 @@ pin_project! {
     }
 }
 
-pub(crate) trait Until<K, O> {
+pub trait Until<K, O> {
     fn until(&mut self, results: &HashMap<K, O>, cx: &mut Context<'_>) -> bool;
 }
 
@@ -55,10 +65,7 @@ impl<K, F: Future> Future for KeyedFuture<K, F> {
     }
 }
 
-pub(crate) fn join_until<K, F, I: IntoIterator<Item = (K, F)>, U: Until<K, F::Output>>(
-    iter: I,
-    until: U,
-) -> JoinUntil<K, F, U>
+pub fn join<K, F, I: IntoIterator<Item = (K, F)>>(iter: I) -> Join<K, F>
 where
     F: Future,
 {
@@ -70,10 +77,22 @@ where
         });
     }
 
-    JoinUntil {
+    Join {
         output: HashMap::with_capacity(active.len()),
         active,
-        until,
+    }
+}
+
+impl<K: Eq + Hash, F> Join<K, F>
+where
+    F: Future,
+{
+    pub(crate) fn until<U: Until<K, F::Output>>(self, until: U) -> JoinUntil<K, F, U> {
+        JoinUntil {
+            active: self.active,
+            output: self.output,
+            until,
+        }
     }
 }
 

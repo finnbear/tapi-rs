@@ -6,10 +6,10 @@ use super::ReplicaIndex;
 
 /// Internally stores 'f'
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub(crate) struct Size(usize);
+pub struct Size(usize);
 
 #[derive(Clone)]
-pub(crate) struct Membership<T: Transport> {
+pub struct Membership<T: Transport> {
     members: Vec<T::Address>,
 }
 
@@ -22,26 +22,26 @@ impl<T: Transport> Debug for Membership<T> {
 }
 
 impl<T: Transport> Membership<T> {
-    pub(crate) fn new(members: Vec<T::Address>) -> Self {
+    pub fn new(members: Vec<T::Address>) -> Self {
         assert_ne!(members.len(), 0);
         assert_eq!(members.len() % 2, 1);
         Self { members }
     }
 
-    pub(crate) fn get(&self, index: ReplicaIndex) -> Option<T::Address> {
+    pub fn get(&self, index: ReplicaIndex) -> Option<T::Address> {
         self.members.get(index.0).cloned()
     }
 
-    pub(crate) fn size(&self) -> Size {
+    pub fn size(&self) -> Size {
         Size((self.members.len() - 1) / 2)
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.members.len()
     }
 
     #[allow(clippy::type_complexity)]
-    pub(crate) fn iter(
+    pub fn iter(
         &self,
     ) -> std::iter::Map<
         std::iter::Enumerate<std::slice::Iter<'_, T::Address>>,
@@ -80,19 +80,19 @@ impl<'a, T: Transport> IntoIterator for &'a Membership<T> {
 }
 
 impl Size {
-    pub(crate) fn f(&self) -> usize {
+    pub fn f(&self) -> usize {
         self.0
     }
 
-    pub(crate) fn f_plus_one(&self) -> usize {
+    pub fn f_plus_one(&self) -> usize {
         self.f() + 1
     }
 
-    pub(crate) fn three_over_two_f_plus_one(&self) -> usize {
+    pub fn three_over_two_f_plus_one(&self) -> usize {
         (self.f() * 3).div_ceil(2) + 1
     }
 
-    pub(crate) fn f_over_two_plus_one(&self) -> usize {
+    pub fn f_over_two_plus_one(&self) -> usize {
         self.f().div_ceil(2) + 1
     }
 }

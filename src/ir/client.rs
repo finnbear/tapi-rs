@@ -5,11 +5,12 @@ use super::{
 };
 use crate::{
     ir::{membership, Confirm, FinalizeConsensus, Replica, ReplyConsensus, ReplyInconsistent},
-    util::join_until,
+    util::join,
     Transport,
 };
 use futures::pin_mut;
 use rand::{thread_rng, Rng};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -25,8 +26,8 @@ use std::{
     time::Duration,
 };
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) struct Id(pub(crate) u64);
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub struct Id(pub u64);
 
 impl Id {
     fn new() -> Self {
@@ -46,7 +47,7 @@ impl Debug for Id {
     }
 }
 
-pub(crate) struct Client<T: Transport, O, R> {
+pub struct Client<T: Transport, O, R> {
     id: Id,
     inner: Arc<Inner<T>>,
     _spooky: PhantomData<(O, R)>,
@@ -82,11 +83,11 @@ impl<T: Transport> SyncInner<T> {
 
 impl<
         T: Transport<Message = Message<O, R>>,
-        O: Clone + Debug,
+        O: Clone + Debug + Send,
         R: Clone + Eq + Hash + Send + Debug,
     > Client<T, O, R>
 {
-    pub(crate) fn new(membership: Membership<T>, transport: T) -> Self {
+    pub fn new(membership: Membership<T>, transport: T) -> Self {
         Self {
             id: Id::new(),
             inner: Arc::new(Inner {
@@ -100,8 +101,12 @@ impl<
         }
     }
 
-    pub(crate) fn id(&self) -> Id {
+    pub fn id(&self) -> Id {
         self.id
+    }
+
+    pub fn transport(&self) -> &T {
+        &self.inner.transport
     }
 
     fn notify_old_views(
@@ -124,10 +129,11 @@ impl<
         }
     }
 
-    pub(crate) fn invoke_unlogged(&self, index: ReplicaIndex, op: O) -> impl Future<Output = R> {
-        let sync = self.inner.sync.lock().unwrap();
-        let address = sync.membership.get(index).unwrap();
-        drop(sync);
+    pub fn invoke_unlogged(&self, index: ReplicaIndex, op: O) -> impl Future<Output = R> {
+        let address = {
+            let sync = self.inner.sync.lock().unwrap();
+            sync.membership.get(index).unwrap()
+        };
 
         let future = self
             .inner
@@ -137,17 +143,18 @@ impl<
         async move { future.await.result }
     }
 
-    pub(crate) fn invoke_inconsistent(&self, op: O) -> impl Future<Output = ()> {
+    pub fn invoke_inconsistent(&self, op: O) -> impl Future<Output = ()> {
         let client_id = self.id;
         let inner = Arc::clone(&self.inner);
 
-        let mut sync = inner.sync.lock().unwrap();
-        let number = sync.next_number();
-        let op_id = OpId {
-            client_id: self.id,
-            number,
+        let op_id = {
+            let mut sync = inner.sync.lock().unwrap();
+
+            OpId {
+                client_id: self.id,
+                number: sync.next_number(),
+            }
         };
-        drop(sync);
 
         fn has_quorum(
             membership: MembershipSize,
@@ -173,11 +180,11 @@ impl<
 
         async move {
             loop {
-                let sync = inner.sync.lock().unwrap();
-                let membership_size = sync.membership.size();
-                let mut timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
-                let future = join_until(
-                    sync.membership.iter().map(|(index, address)| {
+                let (membership_size, future) = {
+                    let sync = inner.sync.lock().unwrap();
+                    let membership_size = sync.membership.size();
+
+                    let future = join(sync.membership.iter().map(|(index, address)| {
                         (
                             index,
                             inner.transport.send::<ReplyInconsistent>(
@@ -188,19 +195,24 @@ impl<
                                 },
                             ),
                         )
-                    }),
-                    move |results: &HashMap<ReplicaIndex, ReplyInconsistent>,
-                          cx: &mut Context<'_>| {
-                        has_quorum(
-                            membership_size,
-                            results,
-                            timeout.as_mut().poll(cx).is_ready(),
-                        )
-                    },
-                );
-                drop(sync);
+                    }));
+                    (membership_size, future)
+                };
 
-                let results = future.await;
+                let mut timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
+
+                let results = future
+                    .until(
+                        move |results: &HashMap<ReplicaIndex, ReplyInconsistent>,
+                              cx: &mut Context<'_>| {
+                            has_quorum(
+                                membership_size,
+                                results,
+                                timeout.as_mut().poll(cx).is_ready(),
+                            )
+                        },
+                    )
+                    .await;
 
                 let sync = inner.sync.lock().unwrap();
                 Self::notify_old_views(
@@ -224,11 +236,11 @@ impl<
         }
     }
 
-    pub(crate) fn invoke_consensus(
+    pub fn invoke_consensus(
         &self,
         op: O,
-        decide: impl Fn(HashMap<R, usize>, MembershipSize) -> R,
-    ) -> impl Future<Output = R> {
+        decide: impl Fn(HashMap<R, usize>, MembershipSize) -> R + Send,
+    ) -> impl Future<Output = R> + Send {
         fn get_finalized<R>(replies: &HashMap<ReplicaIndex, ReplyConsensus<R>>) -> Option<&R> {
             replies
                 .values()
@@ -266,15 +278,13 @@ impl<
 
         async move {
             'retry: loop {
-                let mut sync = inner.sync.lock().unwrap();
-                let number = sync.next_number();
-                let op_id = OpId { client_id, number };
-                let membership_size = sync.membership.size();
+                let (membership_size, op_id, future) = {
+                    let mut sync = inner.sync.lock().unwrap();
+                    let number = sync.next_number();
+                    let op_id = OpId { client_id, number };
+                    let membership_size = sync.membership.size();
 
-                let mut soft_timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
-                let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_secs(3)));
-                let future = join_until(
-                    sync.membership.iter().map(|(index, address)| {
+                    let future = join(sync.membership.iter().map(|(index, address)| {
                         (
                             index,
                             inner.transport.send::<ReplyConsensus<R>>(
@@ -285,83 +295,95 @@ impl<
                                 },
                             ),
                         )
-                    }),
-                    move |results: &HashMap<ReplicaIndex, ReplyConsensus<R>>,
-                          cx: &mut Context<'_>| {
-                        get_finalized(results).is_some()
-                            || get_quorum(
-                                membership_size,
-                                results,
-                                soft_timeout.as_mut().poll(cx).is_pending(),
-                            )
-                            .is_some()
-                            || hard_timeout.as_mut().poll(cx).is_ready()
-                    },
-                );
-                drop(sync);
+                    }));
+                    (membership_size, op_id, future)
+                };
 
-                let results = future.await;
-                let sync = inner.sync.lock().unwrap();
+                let mut soft_timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
+                let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_secs(3)));
 
-                Self::notify_old_views(
-                    &inner.transport,
-                    &*sync,
-                    results.iter().map(|(i, r)| (*i, r.view_number)),
-                );
+                let results = future
+                    .until(
+                        move |results: &HashMap<ReplicaIndex, ReplyConsensus<R>>,
+                              cx: &mut Context<'_>| {
+                            get_finalized(results).is_some()
+                                || get_quorum(
+                                    membership_size,
+                                    results,
+                                    soft_timeout.as_mut().poll(cx).is_pending(),
+                                )
+                                .is_some()
+                                || hard_timeout.as_mut().poll(cx).is_ready()
+                        },
+                    )
+                    .await;
 
-                let membership_size = sync.membership.size();
-                let finalized = get_finalized(&results);
-                //println!("checking quorum: {}", finalized.is_some());
-                if finalized.is_none() && let Some((_, result)) = get_quorum(membership_size, &results, true) {
-                    //println!("fast path");
-
-                    // Fast path.
-                    for (_, address) in &sync.membership {
-                        inner.transport.do_send(
-                            address,
-                            FinalizeConsensus {
-                                op_id,
-                                result: result.clone(),
-                            },
-                        );
+                fn get_quorum_view(
+                    membership: MembershipSize,
+                    results: &HashMap<ReplicaIndex, Confirm>,
+                ) -> Option<ViewNumber> {
+                    let threshold = membership.f_plus_one();
+                    for result in results.values() {
+                        let matching = results
+                            .values()
+                            .filter(|other| other.view_number == result.view_number)
+                            .count();
+                        if matching >= threshold {
+                            return Some(result.view_number);
+                        }
                     }
-                    return result.clone();
-                } else if let Some((result, reply_consensus_view)) = finalized.map(|f| (f.clone(), None)).or_else(|| {
-                    let view_number = get_quorum(membership_size, &results, false).map(|(v, _)| v);
-                    view_number.map(|view_number| {
-                        let results = results
-                            .into_values()
-                            .filter(|rc| rc.view_number == view_number)
-                            .map(|rc| rc.result);
-                        let mut totals = HashMap::new();
-                        for result in results {
-                            *totals.entry(result).or_default() += 1;
-                        }
-                        (decide(
-                                totals,
-                                membership_size
-                        ), Some(view_number))
-                    })
-                }) {
-                    // println!("slow/finalized path");
+                    None
+                }
 
-                    fn get_quorum_view(membership: MembershipSize, results: &HashMap<ReplicaIndex, Confirm>) -> Option<ViewNumber> {
-                        let threshold = membership.f_plus_one();
-                        for result in results.values() {
-                            let matching = results.values().filter(|other| other.view_number == result.view_number).count();
-                            if matching >= threshold {
-                                return Some(result.view_number);
-                            }
+                let next = {
+                    let sync = inner.sync.lock().unwrap();
+
+                    Self::notify_old_views(
+                        &inner.transport,
+                        &*sync,
+                        results.iter().map(|(i, r)| (*i, r.view_number)),
+                    );
+
+                    let membership_size = sync.membership.size();
+                    let finalized = get_finalized(&results);
+                    //println!("checking quorum: {}", finalized.is_some());
+                    if finalized.is_none() && let Some((_, result)) = get_quorum(membership_size, &results, true) {
+                        //println!("fast path");
+
+                        // Fast path.
+                        for (_, address) in &sync.membership {
+                            inner.transport.do_send(
+                                address,
+                                FinalizeConsensus {
+                                    op_id,
+                                    result: result.clone(),
+                                },
+                            );
                         }
-                        None
+                        return result.clone();
                     }
 
-                    // Slow path.
-                    let mut soft_timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
-                    let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_secs(3)));
+                    if let Some((result, reply_consensus_view)) =
+                        finalized.map(|f| (f.clone(), None)).or_else(|| {
+                            let view_number =
+                                get_quorum(membership_size, &results, false).map(|(v, _)| v);
+                            view_number.map(|view_number| {
+                                let results = results
+                                    .into_values()
+                                    .filter(|rc| rc.view_number == view_number)
+                                    .map(|rc| rc.result);
+                                let mut totals = HashMap::new();
+                                for result in results {
+                                    *totals.entry(result).or_default() += 1;
+                                }
+                                (decide(totals, membership_size), Some(view_number))
+                            })
+                        })
+                    {
+                        // println!("slow/finalized path");
 
-                    let future = join_until(
-                        sync.membership.iter().map(|(index, address)| {
+                        // Slow path.
+                        let future = join(sync.membership.iter().map(|(index, address)| {
                             (
                                 index,
                                 inner.transport.send::<Confirm>(
@@ -372,13 +394,28 @@ impl<
                                     },
                                 ),
                             )
-                        }),
-                        |results: &HashMap<ReplicaIndex, Confirm>, cx: &mut Context<'_>| {
-                            get_quorum_view(membership_size, results).is_some() || (soft_timeout.as_mut().poll(cx).is_ready() && results.len() >= membership_size.f_plus_one()) || hard_timeout.as_mut().poll(cx).is_ready()
-                        },
-                    );
-                    drop(sync);
-                    let results = future.await;
+                        }));
+
+                        Some((result, reply_consensus_view, future))
+                    } else {
+                        // println!("no quorum");
+                        None
+                    }
+                };
+
+                if let Some((result, reply_consensus_view, future)) = next {
+                    let mut soft_timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
+                    let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_secs(3)));
+                    let results = future
+                        .until(
+                            |results: &HashMap<ReplicaIndex, Confirm>, cx: &mut Context<'_>| {
+                                get_quorum_view(membership_size, results).is_some()
+                                    || (soft_timeout.as_mut().poll(cx).is_ready()
+                                        && results.len() >= membership_size.f_plus_one())
+                                    || hard_timeout.as_mut().poll(cx).is_ready()
+                            },
+                        )
+                        .await;
                     let mut sync = inner.sync.lock().unwrap();
                     Self::notify_old_views(
                         &inner.transport,
@@ -388,18 +425,8 @@ impl<
                     if let Some(quorum_view) = get_quorum_view(membership_size, &results) && reply_consensus_view.map(|reply_consensus_view| quorum_view == reply_consensus_view).unwrap_or(true) {
                         return result;
                     }
-                } else {
-                    // println!("no quorum");
                 }
             }
         }
-    }
-
-    pub(crate) fn receive(
-        &self,
-        sender: T::Address,
-        message: Message<O, R>,
-    ) -> Option<Message<O, R>> {
-        None
     }
 }

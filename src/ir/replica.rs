@@ -14,8 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) struct Index(pub usize);
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub struct Index(pub usize);
 
 impl Debug for Index {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -24,23 +24,23 @@ impl Debug for Index {
 }
 
 #[derive(Debug)]
-pub(crate) enum Status {
+pub enum Status {
     Normal,
     ViewChanging,
     Recovering,
 }
 
 impl Status {
-    pub(crate) fn is_normal(&self) -> bool {
+    pub fn is_normal(&self) -> bool {
         matches!(self, Self::Normal)
     }
 
-    pub(crate) fn is_view_changing(&self) -> bool {
+    pub fn is_view_changing(&self) -> bool {
         matches!(self, Self::ViewChanging)
     }
 }
 
-pub(crate) trait Upcalls: Send + 'static {
+pub trait Upcalls: Send + 'static {
     type Op: TransportMessage;
     type Result: TransportMessage + PartialEq;
 
@@ -59,7 +59,7 @@ pub(crate) trait Upcalls: Send + 'static {
     ) -> HashMap<OpId, Self::Result>;
 }
 
-pub(crate) struct Replica<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
+pub struct Replica<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
     index: Index,
     inner: Arc<Inner<U, T>>,
 }
@@ -100,7 +100,7 @@ struct PersistentViewInfo {
 impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T> {
     const VIEW_CHANGE_INTERVAL: Duration = Duration::from_secs(4);
 
-    pub(crate) fn new(index: Index, membership: Membership<T>, upcalls: U, transport: T) -> Self {
+    pub fn new(index: Index, membership: Membership<T>, upcalls: U, transport: T) -> Self {
         let ret = Self {
             index,
             inner: Arc::new(Inner {
@@ -213,7 +213,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
         }
     }
 
-    pub(crate) fn receive(
+    pub fn receive(
         &self,
         address: T::Address,
         message: Message<U::Op, U::Result>,

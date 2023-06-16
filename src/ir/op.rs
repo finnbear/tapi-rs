@@ -1,10 +1,12 @@
+use serde::{Deserialize, Serialize};
+
 use super::ClientId;
 use std::fmt::Debug;
 
-#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) struct Id {
-    pub(crate) client_id: ClientId,
-    pub(crate) number: u64,
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub struct Id {
+    pub client_id: ClientId,
+    pub number: u64,
 }
 
 impl Debug for Id {

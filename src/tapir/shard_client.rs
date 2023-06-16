@@ -17,38 +17,38 @@ use std::{
     },
 };
 
-pub(crate) struct ShardClient<K, V, T: Transport> {
+pub struct ShardClient<K: Hash + Eq, V, T: Transport> {
     inner: IrClient<T, Request<K, V>, Reply<V>>,
 }
 
 impl<
-        K: Debug + Clone + Hash + Eq,
+        K: Debug + Clone + Hash + Eq + Send,
         V: Eq + Hash + Debug + Clone + Send,
         T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
     > ShardClient<K, V, T>
 {
-    pub(crate) fn new(membership: IrMembership<T>, transport: T) -> Self {
+    pub fn new(membership: IrMembership<T>, transport: T) -> Self {
         Self {
             inner: IrClient::new(membership, transport),
         }
     }
 
     // TODO: Use same id for all shards?
-    pub(crate) fn id(&self) -> IrClientId {
+    pub fn id(&self) -> IrClientId {
         self.inner.id()
     }
 
-    pub(crate) fn begin(&self, transaction_id: OccTransactionId) -> ShardTransaction<K, V, T> {
+    pub fn begin(&self, transaction_id: OccTransactionId) -> ShardTransaction<K, V, T> {
         ShardTransaction::new(self.inner.clone(), transaction_id)
     }
 }
 
-pub(crate) struct ShardTransaction<K, V, T: Transport> {
-    pub(crate) client: IrClient<T, Request<K, V>, Reply<V>>,
+pub struct ShardTransaction<K: Hash + Eq, V, T: Transport> {
+    pub client: IrClient<T, Request<K, V>, Reply<V>>,
     inner: Arc<Mutex<Inner<K, V>>>,
 }
 
-impl<K, V, T: Transport> Clone for ShardTransaction<K, V, T> {
+impl<K: Hash + Eq, V, T: Transport> Clone for ShardTransaction<K, V, T> {
     fn clone(&self) -> Self {
         Self {
             client: self.client.clone(),
@@ -57,14 +57,14 @@ impl<K, V, T: Transport> Clone for ShardTransaction<K, V, T> {
     }
 }
 
-struct Inner<K, V> {
+struct Inner<K: Hash + Eq, V> {
     id: OccTransactionId,
     inner: OccTransaction<K, V, Timestamp>,
     read_cache: HashMap<K, Option<V>>,
 }
 
 impl<
-        K: Eq + Hash + Clone + Debug,
+        K: Eq + Hash + Clone + Debug + Send,
         V: Clone + Debug + Hash + Eq + Send,
         T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
     > ShardTransaction<K, V, T>
@@ -80,7 +80,7 @@ impl<
         }
     }
 
-    pub(crate) fn max_read_timestamp(&self) -> u64 {
+    pub fn max_read_timestamp(&self) -> u64 {
         self.inner
             .lock()
             .unwrap()
@@ -92,23 +92,24 @@ impl<
             .unwrap_or_default()
     }
 
-    pub(crate) fn get(&self, key: K) -> impl Future<Output = Option<V>> {
+    pub fn get(&self, key: K) -> impl Future<Output = Option<V>> + Send {
         let client = self.client.clone();
         let inner = Arc::clone(&self.inner);
 
         async move {
-            let lock = inner.lock().unwrap();
+            {
+                let lock = inner.lock().unwrap();
 
-            // Read own writes.
-            if let Some(write) = lock.inner.write_set.get(&key) {
-                return write.as_ref().cloned();
-            }
+                // Read own writes.
+                if let Some(write) = lock.inner.write_set.get(&key) {
+                    return write.as_ref().cloned();
+                }
 
-            // Consistent reads.
-            if let Some(read) = lock.read_cache.get(&key) {
-                return read.as_ref().cloned();
+                // Consistent reads.
+                if let Some(read) = lock.read_cache.get(&key) {
+                    return read.as_ref().cloned();
+                }
             }
-            drop(lock);
 
             use rand::Rng;
             let future = client.invoke_unlogged(
@@ -143,15 +144,15 @@ impl<
         }
     }
 
-    pub(crate) fn put(&self, key: K, value: Option<V>) {
+    pub fn put(&self, key: K, value: Option<V>) {
         let mut lock = self.inner.lock().unwrap();
         lock.inner.add_write(key, value);
     }
 
-    pub(crate) fn prepare(
+    pub fn prepare(
         &self,
         timestamp: Timestamp,
-    ) -> impl Future<Output = OccPrepareResult<Timestamp>> {
+    ) -> impl Future<Output = OccPrepareResult<Timestamp>> + Send {
         let mut lock = self.inner.lock().unwrap();
         let future = self.client.invoke_consensus(
             Request::Prepare {
@@ -210,11 +211,11 @@ impl<
         }
     }
 
-    pub(crate) fn end(
+    pub fn end(
         &self,
         prepared_timestamp: Timestamp,
         commit: bool,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + Send {
         let mut lock = self.inner.lock().unwrap();
         let future = self.client.invoke_inconsistent(if commit {
             Request::Commit {

@@ -1,14 +1,16 @@
 mod channel;
-mod error;
 mod message;
 
-pub(crate) use channel::{Channel, Registry as ChannelRegistry};
-pub(crate) use error::Error;
-pub(crate) use message::Message;
+pub use channel::{Channel, Registry as ChannelRegistry};
+pub use message::Message;
 use serde::{de::DeserializeOwned, Serialize};
-use std::{fmt::Debug, future::Future, time::Duration};
+use std::{
+    fmt::Debug,
+    future::Future,
+    time::{Duration, SystemTime},
+};
 
-pub(crate) trait Transport: Clone + Send + Sync + 'static {
+pub trait Transport: Clone + Send + Sync + 'static {
     type Address: Copy + Debug + Send + 'static;
     type Sleep: Future<Output = ()> + Send;
     type Message: Message;
@@ -16,6 +18,17 @@ pub(crate) trait Transport: Clone + Send + Sync + 'static {
     /// Get own address.
     fn address(&self) -> Self::Address;
 
+    /// Get time (nanos since epoch).
+    fn time(&self) -> u64 {
+        use rand::Rng;
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
+            + rand::thread_rng().gen_range(0..10 * 1000 * 1000)
+    }
+
+    /// Sleep for duration.
     fn sleep(duration: Duration) -> Self::Sleep;
 
     /// Synchronously persist a key-value pair.

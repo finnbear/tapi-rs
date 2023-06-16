@@ -1,8 +1,12 @@
+use std::hash::Hash;
+
+use serde::{Deserialize, Serialize};
+
 use super::Timestamp;
 use crate::{OccTransaction, OccTransactionId};
 
-#[derive(Debug, Clone)]
-pub(crate) enum Request<K, V> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Request<K: Hash + Eq, V> {
     Get {
         // TODO: Used by read-only extension:  transaction_id: OccTransactionId,
         /// Key to get the latest version of

@@ -164,8 +164,7 @@ async fn lock_server(num_replicas: usize) {
         Arc::new_cyclic(
             |weak: &std::sync::Weak<IrClient<ChannelTransport<Message>, Op, Res>>| {
                 let weak = weak.clone();
-                let channel =
-                    registry.channel(move |from, message| weak.upgrade()?.receive(from, message));
+                let channel = registry.channel(move |_, _| unreachable!());
                 IrClient::new(membership.clone(), channel)
             },
         )

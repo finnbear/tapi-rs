@@ -6,7 +6,7 @@ use crate::{
     OccTransactionId,
 };
 
-pub(crate) struct Replica<K, V> {
+pub struct Replica<K: Hash + Eq, V> {
     inner: OccStore<K, V, Timestamp>,
     /// Stores the commit timestamp, read/write sets, and commit status (true if committed) for
     /// all known committed and aborted transactions.
@@ -14,8 +14,8 @@ pub(crate) struct Replica<K, V> {
     no_vote_list: HashMap<OccTransactionId, Timestamp>,
 }
 
-impl<K, V> Replica<K, V> {
-    pub(crate) fn new(linearizable: bool) -> Self {
+impl<K: Hash + Eq, V> Replica<K, V> {
+    pub fn new(linearizable: bool) -> Self {
         Self {
             inner: OccStore::new(linearizable),
             transaction_log: HashMap::new(),

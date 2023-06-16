@@ -8,9 +8,9 @@ mod timestamp;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use client::Client;
-pub(crate) use replica::Replica;
-pub(crate) use reply::Reply;
-pub(crate) use request::Request;
-pub(crate) use shard_client::{ShardClient, ShardTransaction};
-pub(crate) use timestamp::Timestamp;
+pub use client::Client;
+pub use replica::Replica;
+pub use reply::Reply;
+pub use request::Request;
+pub use shard_client::{ShardClient, ShardTransaction};
+pub use timestamp::Timestamp;

@@ -2,15 +2,15 @@ use rand::{thread_rng, Rng};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::{Error, Message, Transport};
+use super::{Message, Transport};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::future::Future;
 use std::ops::Range;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
-pub(crate) struct Registry<M> {
+pub struct Registry<M> {
     inner: Arc<RwLock<Inner<M>>>,
 }
 
@@ -36,7 +36,7 @@ impl<M> Default for Inner<M> {
 }
 
 impl<M> Registry<M> {
-    pub(crate) fn channel(
+    pub fn channel(
         &self,
         callback: impl Fn(usize, M) -> Option<M> + Send + Sync + 'static,
     ) -> Channel<M> {
@@ -51,7 +51,7 @@ impl<M> Registry<M> {
     }
 }
 
-pub(crate) struct Channel<M> {
+pub struct Channel<M> {
     address: usize,
     persistent: Arc<Mutex<HashMap<String, String>>>,
     inner: Arc<RwLock<Inner<M>>>,
@@ -69,7 +69,7 @@ impl<M> Clone for Channel<M> {
 
 impl<M: Message> Channel<M> {
     fn should_drop(from: usize, to: usize) -> bool {
-        return false;
+        //return false;
         // return from == 1 || to == 1;
 
         use rand::Rng;
@@ -93,7 +93,7 @@ impl<M: Message> Transport for Channel<M> {
     }
 
     fn sleep(duration: Duration) -> Self::Sleep {
-        tokio::time::sleep(duration)
+        tokio::time::sleep(duration / 10)
     }
 
     fn persist<T: Serialize>(&self, key: &str, value: Option<&T>) {

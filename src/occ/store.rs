@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use super::{CoordinatorViewNumber, Timestamp, Transaction, TransactionId};
 use crate::MvccStore;
 use std::collections::hash_map::Entry;
@@ -7,18 +9,18 @@ use std::hash::Hash;
 use std::ops::Bound;
 use std::{borrow::Borrow, collections::HashMap};
 
-pub(crate) struct Store<K, V, TS> {
+pub struct Store<K: Hash + Eq, V, TS> {
     linearizable: bool,
     inner: MvccStore<K, V, TS>,
-    pub(crate) prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, CoordinatorViewNumber)>,
+    pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, CoordinatorViewNumber)>,
     // Cache.
     prepared_reads: HashMap<K, BTreeMap<TS, ()>>,
     // Cache.
     prepared_writes: HashMap<K, BTreeMap<TS, ()>>,
 }
 
-#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
-pub(crate) enum PrepareResult<TS: Timestamp> {
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy, Serialize, Deserialize)]
+pub enum PrepareResult<TS: Timestamp> {
     /// The transaction is possible.
     Ok,
     /// There was a conflict that might be resolved by retrying prepare at a different timestamp.
@@ -31,8 +33,8 @@ pub(crate) enum PrepareResult<TS: Timestamp> {
     NoVote,
 }
 
-impl<K, V, TS> Store<K, V, TS> {
-    pub(crate) fn new(linearizable: bool) -> Self {
+impl<K: Hash + Eq, V, TS> Store<K, V, TS> {
+    pub fn new(linearizable: bool) -> Self {
         Self {
             linearizable,
             inner: Default::default(),
@@ -44,21 +46,21 @@ impl<K, V, TS> Store<K, V, TS> {
 }
 
 impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
-    pub(crate) fn get<Q: ?Sized + Eq + Hash>(&self, key: &Q) -> (Option<&V>, TS)
+    pub fn get<Q: ?Sized + Eq + Hash>(&self, key: &Q) -> (Option<&V>, TS)
     where
         K: Borrow<Q>,
     {
         self.inner.get(key)
     }
 
-    pub(crate) fn get_at<Q: ?Sized + Eq + Hash>(&self, key: &Q, timestamp: TS) -> (Option<&V>, TS)
+    pub fn get_at<Q: ?Sized + Eq + Hash>(&self, key: &Q, timestamp: TS) -> (Option<&V>, TS)
     where
         K: Borrow<Q>,
     {
         self.inner.get_at(key, timestamp)
     }
 
-    pub(crate) fn prepare(
+    pub fn prepare(
         &mut self,
         id: TransactionId,
         transaction: Transaction<K, V, TS>,
@@ -160,12 +162,7 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
         PrepareResult::Ok
     }
 
-    pub(crate) fn commit(
-        &mut self,
-        id: TransactionId,
-        transaction: Transaction<K, V, TS>,
-        commit: TS,
-    ) {
+    pub fn commit(&mut self, id: TransactionId, transaction: Transaction<K, V, TS>, commit: TS) {
         for (key, read) in transaction.read_set {
             self.inner.commit_get(key.clone(), read, commit);
         }
@@ -178,16 +175,16 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
         self.remove_prepared(id);
     }
 
-    pub(crate) fn abort(&mut self, id: TransactionId) {
+    pub fn abort(&mut self, id: TransactionId) {
         // Note: Transaction may not be in the prepared list of this particular replica, and that's okay.
         self.remove_prepared(id);
     }
 
-    pub(crate) fn put(&mut self, key: K, value: Option<V>, timestamp: TS) {
+    pub fn put(&mut self, key: K, value: Option<V>, timestamp: TS) {
         self.inner.put(key, value, timestamp);
     }
 
-    pub(crate) fn add_prepared(
+    pub fn add_prepared(
         &mut self,
         id: TransactionId,
         transaction: Transaction<K, V, TS>,
@@ -216,7 +213,7 @@ impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
         }
     }
 
-    pub(crate) fn remove_prepared(&mut self, id: TransactionId) -> bool {
+    pub fn remove_prepared(&mut self, id: TransactionId) -> bool {
         if let Some((commit, transaction, _)) = self.prepared.remove(&id) {
             self.remove_prepared_inner(id, transaction, commit);
             true

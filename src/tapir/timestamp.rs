@@ -1,9 +1,11 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{IrClientId, OccTimestamp};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub(crate) struct Timestamp {
-    pub(crate) time: u64,
-    pub(crate) client_id: IrClientId,
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct Timestamp {
+    pub time: u64,
+    pub client_id: IrClientId,
 }
 
 impl Default for Timestamp {

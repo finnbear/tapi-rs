@@ -3,7 +3,7 @@ mod store;
 mod timestamp;
 mod transaction;
 
-pub(crate) use coordinator::ViewNumber as CoordinatorViewNumber;
-pub(crate) use store::{PrepareResult, Store};
-pub(crate) use timestamp::Timestamp;
-pub(crate) use transaction::{Id as TransactionId, Transaction};
+pub use coordinator::ViewNumber as CoordinatorViewNumber;
+pub use store::{PrepareResult, Store};
+pub use timestamp::Timestamp;
+pub use transaction::{Id as TransactionId, Transaction};

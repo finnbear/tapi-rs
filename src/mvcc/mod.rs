@@ -1,3 +1,3 @@
 mod store;
 
-pub(crate) use store::Store;
+pub use store::Store;
