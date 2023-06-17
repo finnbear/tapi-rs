@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use super::{
     message::ViewChangeAddendum, record::Consistency, Confirm, DoViewChange, FinalizeConsensus,
     FinalizeInconsistent, Membership, Message, OpId, ProposeConsensus, ProposeInconsistent, Record,
-    RecordEntry, RecordEntryState, ReplyConsensus, ReplyInconsistent, ReplyUnlogged,
-    RequestUnlogged, StartView, View, ViewNumber,
+    RecordConsensusEntry, RecordEntryState, RecordInconsistentEntry, ReplyConsensus,
+    ReplyInconsistent, ReplyUnlogged, RequestUnlogged, StartView, View, ViewNumber,
 };
 use crate::{Transport, TransportMessage};
 use std::{
@@ -55,7 +55,7 @@ pub trait Upcalls: Send + 'static {
     fn merge(
         &mut self,
         d: HashMap<OpId, (Self::Op, Self::Result)>,
-        u: Vec<(OpId, Self::Op, Option<Self::Result>)>,
+        u: Vec<(OpId, Self::Op, Self::Result)>,
     ) -> HashMap<OpId, Self::Result>;
 }
 
@@ -230,12 +230,14 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
                 if sync.status.is_normal() {
-                    let entry = sync.record.entries.entry(op_id).or_insert(RecordEntry {
-                        op,
-                        consistency: Consistency::Inconsistent,
-                        result: None,
-                        state: RecordEntryState::Tentative,
-                    });
+                    let entry =
+                        sync.record
+                            .inconsistent
+                            .entry(op_id)
+                            .or_insert(RecordInconsistentEntry {
+                                op,
+                                state: RecordEntryState::Tentative,
+                            });
 
                     return Some(Message::ReplyInconsistent(ReplyInconsistent {
                         op_id,
@@ -248,32 +250,27 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
                 if sync.status.is_normal() {
-                    let (result, state) = match sync.record.entries.entry(op_id) {
+                    let (result, state) = match sync.record.consensus.entry(op_id) {
                         Entry::Occupied(entry) => {
                             let entry = entry.get();
                             (entry.result.clone(), entry.state)
                         }
                         Entry::Vacant(vacant) => {
-                            let entry = vacant.insert(RecordEntry {
-                                result: Some(sync.upcalls.exec_consensus(&op)),
+                            let entry = vacant.insert(RecordConsensusEntry {
+                                result: sync.upcalls.exec_consensus(&op),
                                 op,
-                                consistency: Consistency::Consensus,
                                 state: RecordEntryState::Tentative,
                             });
                             (entry.result.clone(), entry.state)
                         }
                     };
 
-                    if let Some(result) = result {
-                        return Some(Message::ReplyConsensus(ReplyConsensus {
-                            op_id,
-                            view_number: sync.view.number,
-                            result,
-                            state,
-                        }));
-                    } else {
-                        // println!("{:?} no consensus result", self.index);
-                    }
+                    return Some(Message::ReplyConsensus(ReplyConsensus {
+                        op_id,
+                        view_number: sync.view.number,
+                        result,
+                        state,
+                    }));
                 } else {
                     //println!("{:?} abnormal", self.index);
                 }
@@ -281,19 +278,17 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
             Message::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
-                if sync.status.is_normal() {
-                    if let Some(entry) = sync.record.entries.get_mut(&op_id) {
-                        entry.state = RecordEntryState::Finalized;
-                        sync.upcalls.exec_inconsistent(&entry.op);
-                    }
+                if sync.status.is_normal() && let Some(entry) = sync.record.inconsistent.get_mut(&op_id) && entry.state.is_tentative() {
+                    entry.state = RecordEntryState::Finalized;
+                    sync.upcalls.exec_inconsistent(&entry.op);
                 }
             }
             Message::FinalizeConsensus(FinalizeConsensus { op_id, result }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 if sync.status.is_normal() {
-                    if let Some(entry) = sync.record.entries.get_mut(&op_id) {
+                    if let Some(entry) = sync.record.consensus.get_mut(&op_id) {
                         entry.state = RecordEntryState::Finalized;
-                        entry.result = Some(result);
+                        entry.result = result;
                         return Some(Message::Confirm(Confirm {
                             op_id,
                             view_number: sync.view.number,
@@ -374,35 +369,35 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     #[allow(non_snake_case)]
                                     let mut R = Record::default();
                                     let mut entries_by_opid =
-                                        HashMap::<OpId, Vec<RecordEntry<U::Op, U::Result>>>::new();
+                                        HashMap::<OpId, Vec<RecordConsensusEntry<U::Op, U::Result>>>::new();
                                     let mut finalized = HashSet::new();
                                     for r in latest_records {
-                                        for (op_id, entry) in r.entries.clone() {
-                                            if entry.consistency.is_inconsistent() {
-                                                match R.entries.entry(op_id) {
-                                                    Entry::Vacant(vacant) => {
-                                                        vacant.insert(entry);
-                                                    }
-                                                    Entry::Occupied(mut occupied) => {
-                                                        if entry.state.is_finalized() {
-                                                            occupied.get_mut().state = RecordEntryState::Finalized;
-                                                        }
+                                        for (op_id, entry) in r.inconsistent.clone() {
+                                            match R.inconsistent.entry(op_id) {
+                                                Entry::Vacant(vacant) => {
+                                                    vacant.insert(entry);
+                                                }
+                                                Entry::Occupied(mut occupied) => {
+                                                    if entry.state.is_finalized() {
+                                                        occupied.get_mut().state = RecordEntryState::Finalized;
                                                     }
                                                 }
-                                            } else if entry.state.is_finalized() {
-                                                debug_assert!(entry.consistency.is_consensus());
-                                                R.entries.insert(op_id, entry);
-                                                finalized.insert(op_id);
-                                                entries_by_opid.remove(&op_id);
-                                            } else  {
-                                                debug_assert!(entry.consistency.is_consensus());
-                                                debug_assert!(entry.state.is_tentative());
-
-                                                if !finalized.contains(&op_id) {
-                                                    entries_by_opid
-                                                        .entry(op_id)
-                                                        .or_default()
-                                                        .push(entry);
+                                            }
+                                        }
+                                        for (op_id, entry) in r.consensus.clone() {
+                                            match entry.state {
+                                                RecordEntryState::Finalized => {
+                                                    R.consensus.insert(op_id, entry);
+                                                    finalized.insert(op_id);
+                                                    entries_by_opid.remove(&op_id);
+                                                }
+                                                RecordEntryState::Tentative => {
+                                                    if !finalized.contains(&op_id) {
+                                                        entries_by_opid
+                                                            .entry(op_id)
+                                                            .or_default()
+                                                            .push(entry);
+                                                    }
                                                 }
                                             }
                                         }
@@ -412,7 +407,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     let mut d =
                                         HashMap::<OpId, (U::Op, U::Result)>::new();
                                     let mut u =
-                                        Vec::<(OpId, U::Op, Option<U::Result>)>::new();
+                                        Vec::<(OpId, U::Op, U::Result)>::new();
 
                                     for (op_id, entries) in entries_by_opid.clone() {
                                         let mut majority_result_in_d = None;
@@ -426,8 +421,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                             if matches
                                                 >= sync.view.membership.size().f_over_two_plus_one()
                                             {
-                                                majority_result_in_d =
-                                                    Some(entry.result.as_ref().unwrap().clone());
+                                                majority_result_in_d = Some(entry.result.clone());
                                                 break;
                                             }
                                         }
@@ -455,13 +449,11 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     for (op_id, result) in results_by_opid {
                                         let mut entries = entries_by_opid.get(&op_id).unwrap();
                                         let entry = &entries[0];
-                                        debug_assert!(entry.consistency.is_consensus());
-                                        R.entries.insert(
+                                        R.consensus.insert(
                                             op_id,
-                                            RecordEntry {
+                                            RecordConsensusEntry {
                                                 op: entry.op.clone(),
-                                                consistency: entry.consistency,
-                                                result: Some(result.clone()),
+                                                result: result.clone(),
                                                 state: RecordEntryState::Finalized,
                                             },
                                         );

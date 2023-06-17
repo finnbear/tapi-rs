@@ -3,8 +3,8 @@ use rand::{thread_rng, Rng};
 
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
-    IrMessage, IrOpId, IrRecord, IrRecordEntry, IrReplica, IrReplicaIndex, IrReplicaUpcalls,
-    TapirClient, TapirReplica, TapirReply, TapirRequest, Transport as _,
+    IrMessage, IrOpId, IrRecord, IrRecordConsensusEntry, IrReplica, IrReplicaIndex,
+    IrReplicaUpcalls, TapirClient, TapirReplica, TapirReply, TapirRequest, Transport as _,
 };
 use std::{
     collections::{HashMap, HashSet},

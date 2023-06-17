@@ -17,7 +17,10 @@ pub use message::{
     StartView, ViewChangeAddendum,
 };
 pub use op::Id as OpId;
-pub use record::{Consistency, Entry as RecordEntry, Record, State as RecordEntryState};
+pub use record::{
+    ConsensusEntry as RecordConsensusEntry, Consistency,
+    InconsistentEntry as RecordInconsistentEntry, Record, State as RecordEntryState,
+};
 pub use replica::{
     Index as ReplicaIndex, Replica, Status as ReplicaStatus, Upcalls as ReplicaUpcalls,
 };

@@ -53,41 +53,84 @@ impl Consistency {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Entry<O, R> {
+pub struct InconsistentEntry<O> {
     pub op: O,
-    pub consistency: Consistency,
-    pub result: Option<R>,
     pub state: State,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsensusEntry<O, R> {
+    pub op: O,
+    pub result: R,
+    pub state: State,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record<O, R> {
-    pub entries: HashMap<OpId, Entry<O, R>>,
+    #[serde(
+        with = "vectorize",
+        bound(serialize = "O: Serialize", deserialize = "O: Deserialize<'de>")
+    )]
+    pub inconsistent: HashMap<OpId, InconsistentEntry<O>>,
+    #[serde(
+        with = "vectorize",
+        bound(
+            serialize = "O: Serialize, R: Serialize",
+            deserialize = "O: Deserialize<'de>, R: Deserialize<'de>"
+        )
+    )]
+    pub consensus: HashMap<OpId, ConsensusEntry<O, R>>,
 }
 
 impl<O, R> Default for Record<O, R> {
     fn default() -> Self {
         Self {
-            entries: Default::default(),
+            inconsistent: Default::default(),
+            consensus: Default::default(),
         }
     }
 }
 
-impl<O: Serialize, R: Serialize> Serialize for Record<O, R> {
-    fn serialize<'a, S>(&self, ser: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let container: Vec<_> = self.entries.iter().collect();
-        serde::Serialize::serialize(&container, ser)
-    }
-}
+mod vectorize {
+    use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
+    use std::{collections::HashMap, fmt::format, hash::Hash, marker::PhantomData};
 
-impl<'de, O: Deserialize<'de>, R: Deserialize<'de>> Deserialize<'de> for Record<O, R> {
-    fn deserialize<D: Deserializer<'de>>(des: D) -> Result<Self, D::Error> {
-        let container: Vec<(OpId, Entry<O, R>)> = serde::Deserialize::deserialize(des)?;
-        Ok(Self {
-            entries: HashMap::from_iter(container.into_iter()),
-        })
+    pub fn serialize<S: Serializer, K: Serialize, V: Serialize>(
+        m: &HashMap<K, V>,
+        ser: S,
+    ) -> Result<S::Ok, S::Error> {
+        ser.collect_seq(m.iter())
+    }
+
+    pub fn deserialize<
+        'de,
+        D: Deserializer<'de>,
+        K: Eq + Hash + Deserialize<'de>,
+        V: Deserialize<'de>,
+    >(
+        de: D,
+    ) -> Result<HashMap<K, V>, D::Error> {
+        struct Unvectorize<K, V>(PhantomData<(K, V)>);
+
+        impl<'de, K: Hash + Eq + Deserialize<'de>, V: Deserialize<'de>> Visitor<'de> for Unvectorize<K, V> {
+            type Value = HashMap<K, V>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("expecting a sequence of keys and values")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut ret = HashMap::with_capacity(seq.size_hint().unwrap_or_default().min(64));
+                while let Some((k, v)) = seq.next_element::<(K, V)>()? {
+                    ret.insert(k, v);
+                }
+                Ok(ret)
+            }
+        }
+
+        de.deserialize_seq(Unvectorize(PhantomData))
     }
 }

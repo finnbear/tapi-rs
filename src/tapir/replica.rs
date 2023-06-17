@@ -100,9 +100,9 @@ impl<
         local: &IrRecord<Self::Op, Self::Result>,
         leader: &IrRecord<Self::Op, Self::Result>,
     ) {
-        for (op_id, entry) in &leader.entries {
+        for (op_id, entry) in &leader.consensus {
             if local
-                .entries
+                .consensus
                 .get(op_id)
                 .map(|local| local.result == entry.result)
                 .unwrap_or(false)
@@ -117,7 +117,7 @@ impl<
                     transaction,
                     commit,
                 } => {
-                    if matches!(entry.result, Some(Reply::Prepare(OccPrepareResult::Ok))) {
+                    if matches!(entry.result, Reply::Prepare(OccPrepareResult::Ok)) {
                         if !self.inner.prepared.contains_key(transaction_id)
                             && !self.transaction_log.contains_key(transaction_id)
                         {
@@ -125,7 +125,7 @@ impl<
                                 .add_prepared(*transaction_id, transaction.clone(), *commit);
                         }
                     } else if self.inner.remove_prepared(*transaction_id)
-                        && matches!(entry.result, Some(Reply::Prepare(OccPrepareResult::NoVote)))
+                        && matches!(entry.result, Reply::Prepare(OccPrepareResult::NoVote))
                         && !self.transaction_log.contains_key(&transaction_id)
                     {
                         self.no_vote_list.insert(*transaction_id, *commit);
@@ -155,12 +155,41 @@ impl<
                 }
             }
         }
+        for (op_id, entry) in &leader.inconsistent {
+            if local.inconsistent.contains_key(op_id) {
+                // Record already in local state.
+                continue;
+            }
+
+            match &entry.op {
+                Request::Commit {
+                    transaction_id,
+                    transaction,
+                    commit,
+                } => {
+                    self.inner
+                        .commit(*transaction_id, transaction.clone(), *commit);
+                    self.transaction_log
+                        .insert(*transaction_id, (*commit, transaction.clone(), true));
+                }
+                Request::Abort {
+                    transaction_id,
+                    transaction,
+                    commit,
+                } => {
+                    self.inner.abort(*transaction_id);
+                    self.transaction_log
+                        .insert(*transaction_id, (*commit, transaction.clone(), false));
+                }
+                _ => unreachable!(),
+            }
+        }
     }
 
     fn merge(
         &mut self,
         d: HashMap<IrOpId, (Self::Op, Self::Result)>,
-        u: Vec<(IrOpId, Self::Op, Option<Self::Result>)>,
+        u: Vec<(IrOpId, Self::Op, Self::Result)>,
     ) -> HashMap<IrOpId, Self::Result> {
         let mut ret: HashMap<IrOpId, Self::Result> = HashMap::new();
         for (op_id, request) in u

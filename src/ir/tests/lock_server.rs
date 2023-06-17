@@ -1,7 +1,7 @@
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
-    IrMessage, IrOpId, IrRecord, IrRecordEntry, IrReplica, IrReplicaIndex, IrReplicaUpcalls,
-    Transport,
+    IrMessage, IrOpId, IrRecord, IrRecordConsensusEntry, IrReplica, IrReplicaIndex,
+    IrReplicaUpcalls, Transport,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -80,16 +80,22 @@ async fn lock_server(num_replicas: usize) {
 
             let mut locked = HashSet::<IrClientId>::new();
             let mut unlocked = HashSet::<IrClientId>::new();
-            for (op_id, entry) in &record.entries {
+            for (op_id, entry) in &record.inconsistent {
                 match entry.op {
-                    Op::Lock(client_id) => {
-                        if matches!(entry.result, Some(Res::Ok)) {
-                            locked.insert(client_id);
-                        }
-                    }
                     Op::Unlock(client_id) => {
                         unlocked.insert(client_id);
                     }
+                    _ => unreachable!(),
+                }
+            }
+            for (op_id, entry) in &record.consensus {
+                match entry.op {
+                    Op::Lock(client_id) => {
+                        if matches!(entry.result, Res::Ok) {
+                            locked.insert(client_id);
+                        }
+                    }
+                    _ => unreachable!(),
                 }
             }
 
@@ -105,7 +111,7 @@ async fn lock_server(num_replicas: usize) {
         fn merge(
             &mut self,
             d: HashMap<IrOpId, (Self::Op, Self::Result)>,
-            u: Vec<(IrOpId, Self::Op, Option<Self::Result>)>,
+            u: Vec<(IrOpId, Self::Op, Self::Result)>,
         ) -> HashMap<IrOpId, Self::Result> {
             let mut results = HashMap::<IrOpId, Self::Result>::new();
 

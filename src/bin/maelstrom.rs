@@ -119,7 +119,6 @@ impl Transport for Maelstrom {
         None
     }
 
-
     fn time(&self) -> u64 {
         use std::time::SystemTime;
         SystemTime::now()
