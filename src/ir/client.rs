@@ -199,7 +199,7 @@ impl<
                     (membership_size, future)
                 };
 
-                let mut timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
+                let mut timeout = std::pin::pin!(T::sleep(Duration::from_millis(250)));
 
                 let results = future
                     .until(
@@ -299,8 +299,8 @@ impl<
                     (membership_size, op_id, future)
                 };
 
-                let mut soft_timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
-                let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_secs(3)));
+                let mut soft_timeout = std::pin::pin!(T::sleep(Duration::from_millis(250)));
+                let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_millis(500)));
 
                 let results = future
                     .until(
@@ -404,8 +404,8 @@ impl<
                 };
 
                 if let Some((result, reply_consensus_view, future)) = next {
-                    let mut soft_timeout = std::pin::pin!(T::sleep(Duration::from_secs(1)));
-                    let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_secs(3)));
+                    let mut soft_timeout = std::pin::pin!(T::sleep(Duration::from_millis(250)));
+                    let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_millis(500)));
                     let results = future
                         .until(
                             |results: &HashMap<ReplicaIndex, Confirm>, cx: &mut Context<'_>| {

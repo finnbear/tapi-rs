@@ -119,6 +119,16 @@ impl Transport for Maelstrom {
         None
     }
 
+
+    fn time(&self) -> u64 {
+        use std::time::SystemTime;
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
+            + rand::thread_rng().gen_range(0..1000 * 1000 * 1000)
+    }
+
     fn sleep(duration: Duration) -> Self::Sleep {
         tokio::time::sleep(duration)
     }
@@ -176,7 +186,7 @@ impl Transport for Maelstrom {
             .inner
             .net
             .txq
-            .send_blocking(Msg {
+            .try_send(Msg {
                 src: self.id.to_string(),
                 dest: address.to_string(),
                 body: Body::Application(message),

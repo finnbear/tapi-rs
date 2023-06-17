@@ -474,7 +474,10 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                 sync.view.number = msg_view_number;
                                 sync.latest_normal_view = msg_view_number;
                                 self.persist_view_info(&*sync);
-                                for (_, address) in &sync.view.membership {
+                                for (index, address) in &sync.view.membership {
+                                    if index == self.index {
+                                        continue;
+                                    }
                                     self.inner.transport.do_send(
                                         address,
                                         Message::StartView(StartView {
