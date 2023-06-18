@@ -10,6 +10,7 @@ use crate::{Transport, TransportMessage};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
+    hash::Hash,
     sync::{Arc, Mutex, MutexGuard, Weak},
     time::{Duration, Instant},
 };
@@ -40,31 +41,35 @@ impl Status {
     }
 }
 
-pub trait Upcalls: Send + 'static {
-    type Op: TransportMessage;
-    type Result: TransportMessage + PartialEq;
+pub trait Upcalls: Sized + Send + 'static {
+    /// Unlogged operation.
+    type UO: TransportMessage;
+    /// Unlogged result.
+    type UR: TransportMessage;
+    /// Inconsistent operation.
+    type IO: TransportMessage;
+    /// Consensus operation.
+    type CO: TransportMessage;
+    /// Consensus result.
+    type CR: TransportMessage + Eq + Hash;
 
-    fn exec_unlogged(&mut self, op: Self::Op) -> Self::Result;
-    fn exec_inconsistent(&mut self, op: &Self::Op);
-    fn exec_consensus(&mut self, op: &Self::Op) -> Self::Result;
-    fn sync(
-        &mut self,
-        local: &Record<Self::Op, Self::Result>,
-        leader: &Record<Self::Op, Self::Result>,
-    );
+    fn exec_unlogged(&mut self, op: Self::UO) -> Self::UR;
+    fn exec_inconsistent(&mut self, op: &Self::IO);
+    fn exec_consensus(&mut self, op: &Self::CO) -> Self::CR;
+    fn sync(&mut self, local: &Record<Self>, leader: &Record<Self>);
     fn merge(
         &mut self,
-        d: HashMap<OpId, (Self::Op, Self::Result)>,
-        u: Vec<(OpId, Self::Op, Self::Result)>,
-    ) -> HashMap<OpId, Self::Result>;
+        d: HashMap<OpId, (Self::CO, Self::CR)>,
+        u: Vec<(OpId, Self::CO, Self::CR)>,
+    ) -> HashMap<OpId, Self::CR>;
 }
 
-pub struct Replica<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
+pub struct Replica<U: Upcalls, T: Transport<Message = Message<U>>> {
     index: Index,
     inner: Arc<Inner<U, T>>,
 }
 
-impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Debug for Replica<U, T> {
+impl<U: Upcalls, T: Transport<Message = Message<U>>> Debug for Replica<U, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Replica");
         if let Ok(sync) = self.inner.sync.try_lock() {
@@ -76,19 +81,19 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Debug for Re
     }
 }
 
-struct Inner<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
+struct Inner<U: Upcalls, T: Transport<Message = Message<U>>> {
     transport: T,
     sync: Mutex<Sync<U, T>>,
 }
 
-struct Sync<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> {
+struct Sync<U: Upcalls, T: Transport<Message = Message<U>>> {
     status: Status,
     view: View<T>,
     latest_normal_view: ViewNumber,
     changed_view_recently: bool,
     upcalls: U,
-    record: Record<U::Op, U::Result>,
-    outstanding_do_view_changes: HashMap<Index, DoViewChange<U::Op, U::Result>>,
+    record: Record<U>,
+    outstanding_do_view_changes: HashMap<Index, DoViewChange<U::IO, U::CO, U::CR>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -97,7 +102,7 @@ struct PersistentViewInfo {
     latest_normal_view: ViewNumber,
 }
 
-impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T> {
+impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
     const VIEW_CHANGE_INTERVAL: Duration = Duration::from_secs(4);
 
     pub fn new(index: Index, membership: Membership<T>, upcalls: U, transport: T) -> Self {
@@ -114,7 +119,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                     latest_normal_view: ViewNumber(0),
                     changed_view_recently: true,
                     upcalls,
-                    record: Record::default(),
+                    record: Record::<U>::default(),
                     outstanding_do_view_changes: HashMap::new(),
                 }),
             }),
@@ -201,7 +206,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
             }
             transport.do_send(
                 address,
-                Message::DoViewChange(DoViewChange {
+                Message::<U>::DoViewChange(DoViewChange {
                     view_number: sync.view.number,
                     addendum: (index == sync.view.leader_index()).then(|| ViewChangeAddendum {
                         record: sync.record.clone(),
@@ -213,20 +218,16 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
         }
     }
 
-    pub fn receive(
-        &self,
-        address: T::Address,
-        message: Message<U::Op, U::Result>,
-    ) -> Option<Message<U::Op, U::Result>> {
+    pub fn receive(&self, address: T::Address, message: Message<U>) -> Option<Message<U>> {
         match message {
-            Message::RequestUnlogged(RequestUnlogged { op }) => {
+            Message::<U>::RequestUnlogged(RequestUnlogged { op }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 if sync.status.is_normal() {
                     let result = sync.upcalls.exec_unlogged(op);
-                    return Some(Message::ReplyUnlogged(ReplyUnlogged { result }));
+                    return Some(Message::<U>::ReplyUnlogged(ReplyUnlogged { result }));
                 }
             }
-            Message::ProposeInconsistent(ProposeInconsistent { op_id, op }) => {
+            Message::<U>::ProposeInconsistent(ProposeInconsistent { op_id, op }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
                 if sync.status.is_normal() {
@@ -239,14 +240,14 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                 state: RecordEntryState::Tentative,
                             });
 
-                    return Some(Message::ReplyInconsistent(ReplyInconsistent {
+                    return Some(Message::<U>::ReplyInconsistent(ReplyInconsistent {
                         op_id,
                         view_number: sync.view.number,
                         state: entry.state,
                     }));
                 }
             }
-            Message::ProposeConsensus(ProposeConsensus { op_id, op }) => {
+            Message::<U>::ProposeConsensus(ProposeConsensus { op_id, op }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
                 if sync.status.is_normal() {
@@ -265,7 +266,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                         }
                     };
 
-                    return Some(Message::ReplyConsensus(ReplyConsensus {
+                    return Some(Message::<U>::ReplyConsensus(ReplyConsensus {
                         op_id,
                         view_number: sync.view.number,
                         result,
@@ -275,7 +276,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                     //println!("{:?} abnormal", self.index);
                 }
             }
-            Message::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
+            Message::<U>::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
                 if sync.status.is_normal() && let Some(entry) = sync.record.inconsistent.get_mut(&op_id) && entry.state.is_tentative() {
@@ -283,20 +284,20 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                     sync.upcalls.exec_inconsistent(&entry.op);
                 }
             }
-            Message::FinalizeConsensus(FinalizeConsensus { op_id, result }) => {
+            Message::<U>::FinalizeConsensus(FinalizeConsensus { op_id, result }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 if sync.status.is_normal() {
                     if let Some(entry) = sync.record.consensus.get_mut(&op_id) {
                         entry.state = RecordEntryState::Finalized;
                         entry.result = result;
-                        return Some(Message::Confirm(Confirm {
+                        return Some(Message::<U>::Confirm(Confirm {
                             op_id,
                             view_number: sync.view.number,
                         }));
                     }
                 }
             }
-            Message::DoViewChange(msg) => {
+            Message::<U>::DoViewChange(msg) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 if msg.view_number > sync.view.number
                     || (msg.view_number == sync.view.number && sync.status.is_view_changing())
@@ -367,9 +368,9 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     eprintln!("have {} latest", latest_records.len());
 
                                     #[allow(non_snake_case)]
-                                    let mut R = Record::default();
+                                    let mut R = Record::<U>::default();
                                     let mut entries_by_opid =
-                                        HashMap::<OpId, Vec<RecordConsensusEntry<U::Op, U::Result>>>::new();
+                                        HashMap::<OpId, Vec<RecordConsensusEntry<U::CO, U::CR>>>::new();
                                     let mut finalized = HashSet::new();
                                     for r in latest_records {
                                         for (op_id, entry) in r.inconsistent.clone() {
@@ -405,9 +406,9 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
 
                                     // build d and u
                                     let mut d =
-                                        HashMap::<OpId, (U::Op, U::Result)>::new();
+                                        HashMap::<OpId, (U::CO, U::CR)>::new();
                                     let mut u =
-                                        Vec::<(OpId, U::Op, U::Result)>::new();
+                                        Vec::<(OpId, U::CO, U::CR)>::new();
 
                                     for (op_id, entries) in entries_by_opid.clone() {
                                         let mut majority_result_in_d = None;
@@ -472,7 +473,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                                     }
                                     self.inner.transport.do_send(
                                         address,
-                                        Message::StartView(StartView {
+                                        Message::<U>::StartView(StartView {
                                             record: sync.record.clone(),
                                             view_number: sync.view.number,
                                         }),
@@ -484,7 +485,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U::Op, U::Result>>> Replica<U, T
                     }
                 }
             }
-            Message::StartView(StartView {
+            Message::<U>::StartView(StartView {
                 record: new_record,
                 view_number,
             }) => {

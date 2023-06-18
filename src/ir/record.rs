@@ -1,4 +1,4 @@
-use super::OpId;
+use super::{OpId, ReplicaUpcalls};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::HashMap, fmt::Debug};
 
@@ -53,36 +53,28 @@ impl Consistency {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InconsistentEntry<O> {
-    pub op: O,
+pub struct InconsistentEntry<IO> {
+    pub op: IO,
     pub state: State,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConsensusEntry<O, R> {
-    pub op: O,
-    pub result: R,
+pub struct ConsensusEntry<CO, CR> {
+    pub op: CO,
+    pub result: CR,
     pub state: State,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Record<O, R> {
-    #[serde(
-        with = "vectorize",
-        bound(serialize = "O: Serialize", deserialize = "O: Deserialize<'de>")
-    )]
-    pub inconsistent: HashMap<OpId, InconsistentEntry<O>>,
-    #[serde(
-        with = "vectorize",
-        bound(
-            serialize = "O: Serialize, R: Serialize",
-            deserialize = "O: Deserialize<'de>, R: Deserialize<'de>"
-        )
-    )]
-    pub consensus: HashMap<OpId, ConsensusEntry<O, R>>,
+pub type Record<U> =
+    RecordImpl<<U as ReplicaUpcalls>::IO, <U as ReplicaUpcalls>::CO, <U as ReplicaUpcalls>::CR>;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RecordImpl<IO, CO, CR> {
+    pub inconsistent: HashMap<OpId, InconsistentEntry<IO>>,
+    pub consensus: HashMap<OpId, ConsensusEntry<CO, CR>>,
 }
 
-impl<O, R> Default for Record<O, R> {
+impl<IO, CO, CR> Default for RecordImpl<IO, CO, CR> {
     fn default() -> Self {
         Self {
             inconsistent: Default::default(),

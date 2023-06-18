@@ -1,6 +1,6 @@
 use rand::{thread_rng, Rng};
 
-use super::{Reply, Request, Timestamp};
+use super::{Key, Replica, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::{
     transport::Transport, IrClient, IrClientId, IrMembership, IrMessage, IrReplicaIndex,
     OccPrepareResult, OccTransaction, OccTransactionId,
@@ -17,16 +17,11 @@ use std::{
     },
 };
 
-pub struct ShardClient<K: Hash + Eq, V, T: Transport> {
-    inner: IrClient<T, Request<K, V>, Reply<V>>,
+pub struct ShardClient<K: Key, V: Value, T: Transport> {
+    inner: IrClient<Replica<K, V>, T>,
 }
 
-impl<
-        K: Debug + Clone + Hash + Eq + Send,
-        V: Eq + Hash + Debug + Clone + Send,
-        T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
-    > ShardClient<K, V, T>
-{
+impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardClient<K, V, T> {
     pub fn new(membership: IrMembership<T>, transport: T) -> Self {
         Self {
             inner: IrClient::new(membership, transport),
@@ -43,12 +38,12 @@ impl<
     }
 }
 
-pub struct ShardTransaction<K: Hash + Eq, V, T: Transport> {
-    pub client: IrClient<T, Request<K, V>, Reply<V>>,
+pub struct ShardTransaction<K: Key, V: Value, T: Transport> {
+    pub client: IrClient<Replica<K, V>, T>,
     inner: Arc<Mutex<Inner<K, V>>>,
 }
 
-impl<K: Hash + Eq, V, T: Transport> Clone for ShardTransaction<K, V, T> {
+impl<K: Key, V: Value, T: Transport> Clone for ShardTransaction<K, V, T> {
     fn clone(&self) -> Self {
         Self {
             client: self.client.clone(),
@@ -57,19 +52,14 @@ impl<K: Hash + Eq, V, T: Transport> Clone for ShardTransaction<K, V, T> {
     }
 }
 
-struct Inner<K: Hash + Eq, V> {
+struct Inner<K: Key, V: Value> {
     id: OccTransactionId,
     inner: OccTransaction<K, V, Timestamp>,
     read_cache: HashMap<K, Option<V>>,
 }
 
-impl<
-        K: Eq + Hash + Clone + Debug + Send,
-        V: Clone + Debug + Hash + Eq + Send,
-        T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
-    > ShardTransaction<K, V, T>
-{
-    fn new(client: IrClient<T, Request<K, V>, Reply<V>>, id: OccTransactionId) -> Self {
+impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTransaction<K, V, T> {
+    fn new(client: IrClient<Replica<K, V>, T>, id: OccTransactionId) -> Self {
         Self {
             client,
             inner: Arc::new(Mutex::new(Inner {
@@ -114,7 +104,7 @@ impl<
             use rand::Rng;
             let future = client.invoke_unlogged(
                 IrReplicaIndex(rand::thread_rng().gen_range(0..3)),
-                Request::Get {
+                UO::Get {
                     key: key.clone(),
                     timestamp: None,
                 },
@@ -122,9 +112,7 @@ impl<
 
             let reply = future.await;
 
-            let Reply::Get(value, timestamp) = reply else {
-                panic!();
-            };
+            let UR::Get(value, timestamp) = reply;
 
             let mut lock = inner.lock().unwrap();
 
@@ -155,7 +143,7 @@ impl<
     ) -> impl Future<Output = OccPrepareResult<Timestamp>> + Send {
         let mut lock = self.inner.lock().unwrap();
         let future = self.client.invoke_consensus(
-            Request::Prepare {
+            CO::Prepare {
                 transaction_id: lock.id,
                 transaction: lock.inner.clone(),
                 commit: timestamp,
@@ -166,9 +154,7 @@ impl<
                 let mut timestamp = 0u64;
 
                 for (reply, count) in results {
-                    let Reply::Prepare(reply) = reply else {
-                        panic!();
-                    };
+                    let CR::Prepare(reply) = reply;
 
                     match reply {
                         OccPrepareResult::Ok => {
@@ -181,13 +167,13 @@ impl<
                             abstain_count += count;
                         }
                         OccPrepareResult::Fail => {
-                            return Reply::Prepare(OccPrepareResult::Fail);
+                            return CR::Prepare(OccPrepareResult::Fail);
                         }
                         OccPrepareResult::NoVote => unimplemented!(),
                     }
                 }
 
-                Reply::Prepare(if ok_count >= membership_size.f_plus_one() {
+                CR::Prepare(if ok_count >= membership_size.f_plus_one() {
                     OccPrepareResult::Ok
                 } else if abstain_count >= membership_size.f_plus_one() {
                     OccPrepareResult::Fail
@@ -204,9 +190,7 @@ impl<
 
         async move {
             let reply = future.await;
-            let Reply::Prepare(result) = reply else {
-                unreachable!();
-            };
+            let CR::Prepare(result) = reply;
             result
         }
     }
@@ -218,13 +202,13 @@ impl<
     ) -> impl Future<Output = ()> + Send {
         let mut lock = self.inner.lock().unwrap();
         let future = self.client.invoke_inconsistent(if commit {
-            Request::Commit {
+            IO::Commit {
                 transaction_id: lock.id,
                 transaction: lock.inner.clone(),
                 commit: prepared_timestamp,
             }
         } else {
-            Request::Abort {
+            IO::Abort {
                 transaction_id: lock.id,
                 transaction: lock.inner.clone(),
                 commit: prepared_timestamp,

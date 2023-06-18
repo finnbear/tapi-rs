@@ -20,16 +20,13 @@ use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tapirs::{
-    IrMembership, IrMessage, IrReplica, IrReplicaIndex, TapirClient, TapirReplica, TapirReply,
-    TapirRequest, Transport,
+    IrMembership, IrMessage, IrReplica, IrReplicaIndex, TapirClient, TapirReplica, Transport,
 };
 use tokio::spawn;
 
 type K = String;
 type V = String;
-type Op = TapirRequest<K, V>;
-type Res = TapirReply<V>;
-type Message = IrMessage<Op, Res>;
+type Message = IrMessage<TapirReplica<K, V>>;
 
 #[derive(Default)]
 struct KvNode {

@@ -1,4 +1,4 @@
-use super::{Reply, Request, ShardClient, ShardTransaction, Timestamp};
+use super::{Key, Replica, ShardClient, ShardTransaction, Timestamp, Value};
 use crate::{IrMembership, IrMessage, OccPrepareResult, OccTransactionId, Transport};
 use rand::{thread_rng, Rng};
 use std::{
@@ -10,25 +10,20 @@ use std::{
     time::SystemTime,
 };
 
-pub struct Client<K: Hash + Eq, V, T: Transport> {
+pub struct Client<K: Key, V: Value, T: Transport> {
     /// TODO: Add multiple shards.
     inner: ShardClient<K, V, T>,
     transport: T,
     next_transaction_number: AtomicU64,
 }
 
-pub struct Transaction<K: Hash + Eq, V, T: Transport> {
+pub struct Transaction<K: Key, V: Value, T: Transport> {
     id: OccTransactionId,
     // TODO: Multiple shards.
     inner: ShardTransaction<K, V, T>,
 }
 
-impl<
-        K: Debug + Clone + Hash + Eq + Send,
-        V: Eq + Hash + Debug + Clone + Send,
-        T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
-    > Client<K, V, T>
-{
+impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Client<K, V, T> {
     pub fn new(membership: IrMembership<T>, transport: T) -> Self {
         Self {
             inner: ShardClient::new(membership, transport.clone()),
@@ -49,12 +44,7 @@ impl<
     }
 }
 
-impl<
-        K: Debug + Clone + Hash + Eq + Send,
-        V: Eq + Hash + Debug + Clone + Send,
-        T: Transport<Message = IrMessage<Request<K, V>, Reply<V>>>,
-    > Transaction<K, V, T>
-{
+impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transaction<K, V, T> {
     pub fn get(&self, key: K) -> impl Future<Output = Option<V>> {
         self.inner.get(key)
     }

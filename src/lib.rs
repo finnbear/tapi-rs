@@ -23,8 +23,6 @@ pub use occ::{
     PrepareResult as OccPrepareResult, Store as OccStore, Timestamp as OccTimestamp,
     Transaction as OccTransaction, TransactionId as OccTransactionId,
 };
-pub use tapir::{
-    Client as TapirClient, Replica as TapirReplica, Reply as TapirReply, Request as TapirRequest,
-};
+pub use tapir::{Client as TapirClient, Replica as TapirReplica};
 pub use transport::{Channel as ChannelTransport, ChannelRegistry};
 pub use transport::{Message as TransportMessage, Transport};

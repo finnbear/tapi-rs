@@ -24,78 +24,57 @@ async fn test_lock_server() {
 
 async fn lock_server(num_replicas: usize) {
     #[derive(Debug, Clone)]
-    enum Op {
-        Lock(IrClientId),
-        Unlock(IrClientId),
-    }
+    struct Lock(IrClientId);
+
+    #[derive(Debug, Clone)]
+    struct Unlock(IrClientId);
 
     #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-    enum Res {
+    enum LockResult {
         Ok,
         No,
     }
 
-    type Message = IrMessage<Op, Res>;
+    type Message = IrMessage<Upcalls>;
 
     struct Upcalls {
         locked: Option<IrClientId>,
     }
 
     impl IrReplicaUpcalls for Upcalls {
-        type Op = Op;
-        type Result = Res;
+        type UO = ();
+        type UR = ();
+        type IO = Unlock;
+        type CO = Lock;
+        type CR = LockResult;
 
-        fn exec_unlogged(&mut self, op: Self::Op) -> Self::Result {
+        fn exec_unlogged(&mut self, op: Self::UO) -> Self::UR {
             unreachable!();
         }
-        fn exec_inconsistent(&mut self, op: &Self::Op) {
-            match op {
-                &Op::Unlock(client_id) => {
-                    if Some(client_id) == self.locked {
-                        self.locked = None;
-                    }
-                }
-                _ => panic!(),
+        fn exec_inconsistent(&mut self, op: &Self::IO) {
+            if Some(op.0) == self.locked {
+                self.locked = None;
             }
         }
-        fn exec_consensus(&mut self, op: &Self::Op) -> Self::Result {
-            match op {
-                &Op::Lock(client_id) => {
-                    if self.locked.is_none() || self.locked == Some(client_id) {
-                        self.locked = Some(client_id);
-                        Res::Ok
-                    } else {
-                        Res::No
-                    }
-                }
-                _ => panic!(),
+        fn exec_consensus(&mut self, op: &Self::CO) -> Self::CR {
+            if self.locked.is_none() || self.locked == Some(op.0) {
+                self.locked = Some(op.0);
+                LockResult::Ok
+            } else {
+                LockResult::No
             }
         }
-        fn sync(
-            &mut self,
-            _: &IrRecord<Self::Op, Self::Result>,
-            record: &IrRecord<Self::Op, Self::Result>,
-        ) {
+        fn sync(&mut self, _: &IrRecord<Self>, record: &IrRecord<Self>) {
             self.locked = None;
 
             let mut locked = HashSet::<IrClientId>::new();
             let mut unlocked = HashSet::<IrClientId>::new();
             for (op_id, entry) in &record.inconsistent {
-                match entry.op {
-                    Op::Unlock(client_id) => {
-                        unlocked.insert(client_id);
-                    }
-                    _ => unreachable!(),
-                }
+                unlocked.insert(entry.op.0);
             }
             for (op_id, entry) in &record.consensus {
-                match entry.op {
-                    Op::Lock(client_id) => {
-                        if matches!(entry.result, Res::Ok) {
-                            locked.insert(client_id);
-                        }
-                    }
-                    _ => unreachable!(),
+                if matches!(entry.result, LockResult::Ok) {
+                    locked.insert(entry.op.0);
                 }
             }
 
@@ -110,30 +89,27 @@ async fn lock_server(num_replicas: usize) {
         }
         fn merge(
             &mut self,
-            d: HashMap<IrOpId, (Self::Op, Self::Result)>,
-            u: Vec<(IrOpId, Self::Op, Self::Result)>,
-        ) -> HashMap<IrOpId, Self::Result> {
-            let mut results = HashMap::<IrOpId, Self::Result>::new();
+            d: HashMap<IrOpId, (Self::CO, Self::CR)>,
+            u: Vec<(IrOpId, Self::CO, Self::CR)>,
+        ) -> HashMap<IrOpId, Self::CR> {
+            let mut results = HashMap::<IrOpId, Self::CR>::new();
 
             for (op_id, (request, reply)) in &d {
-                let Op::Lock(client_id) = request else {
-                    panic!();
-                };
-                let successful = matches!(reply, Res::Ok);
+                let successful = matches!(reply, LockResult::Ok);
 
                 results.insert(
                     *op_id,
                     if successful && self.locked.is_none() {
-                        self.locked = Some(*client_id);
-                        Res::Ok
+                        self.locked = Some(request.0);
+                        LockResult::Ok
                     } else {
-                        Res::No
+                        LockResult::No
                     },
                 );
             }
 
             for (op_id, _, _) in &u {
-                results.insert(*op_id, Res::No);
+                results.insert(*op_id, LockResult::No);
             }
 
             results
@@ -166,9 +142,9 @@ async fn lock_server(num_replicas: usize) {
     fn create_client(
         registry: &ChannelRegistry<Message>,
         membership: &IrMembership<ChannelTransport<Message>>,
-    ) -> Arc<IrClient<ChannelTransport<Message>, Op, Res>> {
+    ) -> Arc<IrClient<Upcalls, ChannelTransport<Message>>> {
         Arc::new_cyclic(
-            |weak: &std::sync::Weak<IrClient<ChannelTransport<Message>, Op, Res>>| {
+            |weak: &std::sync::Weak<IrClient<Upcalls, ChannelTransport<Message>>>| {
                 let weak = weak.clone();
                 let channel = registry.channel(move |_, _| unreachable!());
                 IrClient::new(membership.clone(), channel)
@@ -180,32 +156,32 @@ async fn lock_server(num_replicas: usize) {
         .map(|_| create_client(&registry, &membership))
         .collect::<Vec<_>>();
 
-    let decide_lock = |results: HashMap<Res, usize>, membership: IrMembershipSize| {
+    let decide_lock = |results: HashMap<LockResult, usize>, membership: IrMembershipSize| {
         //println!("deciding {ok} of {} : {results:?}", results.len());
-        if results.get(&Res::Ok).copied().unwrap_or_default() >= membership.f_plus_one() {
-            Res::Ok
+        if results.get(&LockResult::Ok).copied().unwrap_or_default() >= membership.f_plus_one() {
+            LockResult::Ok
         } else {
-            Res::No
+            LockResult::No
         }
     };
 
     for _ in 0..2 {
         assert_eq!(
             clients[0]
-                .invoke_consensus(Op::Lock(clients[0].id()), &decide_lock)
+                .invoke_consensus(Lock(clients[0].id()), &decide_lock)
                 .await,
-            Res::Ok
+            LockResult::Ok
         );
         assert_eq!(
             clients[1]
-                .invoke_consensus(Op::Lock(clients[1].id()), &decide_lock)
+                .invoke_consensus(Lock(clients[1].id()), &decide_lock)
                 .await,
-            Res::No
+            LockResult::No
         );
     }
 
     clients[0]
-        .invoke_inconsistent(Op::Unlock(clients[0].id()))
+        .invoke_inconsistent(Unlock(clients[0].id()))
         .await;
 
     for i in 0..5 {
@@ -213,9 +189,9 @@ async fn lock_server(num_replicas: usize) {
 
         eprintln!("@@@@@ INVOKE {replicas:?}");
         if clients[1]
-            .invoke_consensus(Op::Lock(clients[1].id()), &decide_lock)
+            .invoke_consensus(Lock(clients[1].id()), &decide_lock)
             .await
-            == Res::Ok
+            == LockResult::Ok
         {
             return;
         }

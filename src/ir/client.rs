@@ -1,7 +1,7 @@
 use super::{
     DoViewChange, FinalizeInconsistent, Membership, MembershipSize, Message, OpId,
-    ProposeConsensus, ProposeInconsistent, ReplicaIndex, ReplyUnlogged, RequestUnlogged,
-    ViewChangeAddendum, ViewNumber,
+    ProposeConsensus, ProposeInconsistent, ReplicaIndex, ReplicaUpcalls, ReplyUnlogged,
+    RequestUnlogged, ViewChangeAddendum, ViewNumber,
 };
 use crate::{
     ir::{membership, Confirm, FinalizeConsensus, Replica, ReplyConsensus, ReplyInconsistent},
@@ -47,13 +47,13 @@ impl Debug for Id {
     }
 }
 
-pub struct Client<T: Transport, O, R> {
+pub struct Client<U: ReplicaUpcalls, T: Transport> {
     id: Id,
     inner: Arc<Inner<T>>,
-    _spooky: PhantomData<(O, R)>,
+    _spooky: PhantomData<U>,
 }
 
-impl<T: Transport, O, R> Clone for Client<T, O, R> {
+impl<U: ReplicaUpcalls, T: Transport> Clone for Client<U, T> {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
@@ -81,12 +81,7 @@ impl<T: Transport> SyncInner<T> {
     }
 }
 
-impl<
-        T: Transport<Message = Message<O, R>>,
-        O: Clone + Debug + Send,
-        R: Clone + Eq + Hash + Send + Debug,
-    > Client<T, O, R>
-{
+impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
     pub fn new(membership: Membership<T>, transport: T) -> Self {
         Self {
             id: Id::new(),
@@ -119,7 +114,7 @@ impl<
                 if view_number < latest_view {
                     transport.do_send(
                         sync.membership.get(index).unwrap(),
-                        Message::DoViewChange(DoViewChange {
+                        Message::<U>::DoViewChange(DoViewChange {
                             view_number: latest_view,
                             addendum: None,
                         }),
@@ -129,7 +124,7 @@ impl<
         }
     }
 
-    pub fn invoke_unlogged(&self, index: ReplicaIndex, op: O) -> impl Future<Output = R> {
+    pub fn invoke_unlogged(&self, index: ReplicaIndex, op: U::UO) -> impl Future<Output = U::UR> {
         let address = {
             let sync = self.inner.sync.lock().unwrap();
             sync.membership.get(index).unwrap()
@@ -138,12 +133,12 @@ impl<
         let future = self
             .inner
             .transport
-            .send::<ReplyUnlogged<R>>(address, RequestUnlogged { op: op.clone() });
+            .send::<ReplyUnlogged<U::UR>>(address, RequestUnlogged { op: op.clone() });
 
         async move { future.await.result }
     }
 
-    pub fn invoke_inconsistent(&self, op: O) -> impl Future<Output = ()> {
+    pub fn invoke_inconsistent(&self, op: U::IO) -> impl Future<Output = ()> {
         let client_id = self.id;
         let inner = Arc::clone(&self.inner);
 
@@ -238,9 +233,9 @@ impl<
 
     pub fn invoke_consensus(
         &self,
-        op: O,
-        decide: impl Fn(HashMap<R, usize>, MembershipSize) -> R + Send,
-    ) -> impl Future<Output = R> + Send {
+        op: U::CO,
+        decide: impl Fn(HashMap<U::CR, usize>, MembershipSize) -> U::CR + Send,
+    ) -> impl Future<Output = U::CR> + Send {
         fn get_finalized<R>(replies: &HashMap<ReplicaIndex, ReplyConsensus<R>>) -> Option<&R> {
             replies
                 .values()
@@ -287,7 +282,7 @@ impl<
                     let future = join(sync.membership.iter().map(|(index, address)| {
                         (
                             index,
-                            inner.transport.send::<ReplyConsensus<R>>(
+                            inner.transport.send::<ReplyConsensus<U::CR>>(
                                 address,
                                 ProposeConsensus {
                                     op_id,
@@ -304,7 +299,7 @@ impl<
 
                 let results = future
                     .until(
-                        move |results: &HashMap<ReplicaIndex, ReplyConsensus<R>>,
+                        move |results: &HashMap<ReplicaIndex, ReplyConsensus<U::CR>>,
                               cx: &mut Context<'_>| {
                             get_finalized(results).is_some()
                                 || get_quorum(

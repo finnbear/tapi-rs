@@ -1,42 +1,72 @@
+use super::{
+    record::RecordImpl, OpId, Record, RecordEntryState, ReplicaIndex, ReplicaUpcalls, ViewNumber,
+};
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
-use super::{OpId, Record, RecordEntryState, ReplicaIndex, ViewNumber};
+pub type Message<U> = MessageImpl<
+    <U as ReplicaUpcalls>::UO,
+    <U as ReplicaUpcalls>::UR,
+    <U as ReplicaUpcalls>::IO,
+    <U as ReplicaUpcalls>::CO,
+    <U as ReplicaUpcalls>::CR,
+>;
 
-#[derive(Debug, Clone, derive_more::From, derive_more::TryInto, Serialize, Deserialize)]
-pub enum Message<O, R> {
-    RequestUnlogged(RequestUnlogged<O>),
-    ReplyUnlogged(ReplyUnlogged<R>),
-    ProposeInconsistent(ProposeInconsistent<O>),
-    ProposeConsensus(ProposeConsensus<O>),
+#[derive(Clone, derive_more::From, derive_more::TryInto, Serialize, Deserialize)]
+pub enum MessageImpl<UO, UR, IO, CO, CR> {
+    RequestUnlogged(RequestUnlogged<UO>),
+    ReplyUnlogged(ReplyUnlogged<UR>),
+    ProposeInconsistent(ProposeInconsistent<IO>),
+    ProposeConsensus(ProposeConsensus<CO>),
     ReplyInconsistent(ReplyInconsistent),
-    ReplyConsensus(ReplyConsensus<R>),
+    ReplyConsensus(ReplyConsensus<CR>),
     FinalizeInconsistent(FinalizeInconsistent),
-    FinalizeConsensus(FinalizeConsensus<R>),
+    FinalizeConsensus(FinalizeConsensus<CR>),
     Confirm(Confirm),
-    DoViewChange(DoViewChange<O, R>),
-    StartView(StartView<O, R>),
+    DoViewChange(DoViewChange<IO, CO, CR>),
+    StartView(StartView<IO, CO, CR>),
+}
+
+impl<UO: Debug, UR: Debug, IO: Debug, CO: Debug, CR: Debug> Debug
+    for MessageImpl<UO, UR, IO, CO, CR>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RequestUnlogged(r) => Debug::fmt(r, f),
+            Self::ReplyUnlogged(r) => Debug::fmt(r, f),
+            Self::ProposeInconsistent(r) => Debug::fmt(r, f),
+            Self::ProposeConsensus(r) => Debug::fmt(r, f),
+            Self::ReplyInconsistent(r) => Debug::fmt(r, f),
+            Self::ReplyConsensus(r) => Debug::fmt(r, f),
+            Self::FinalizeInconsistent(r) => Debug::fmt(r, f),
+            Self::FinalizeConsensus(r) => Debug::fmt(r, f),
+            Self::Confirm(r) => Debug::fmt(r, f),
+            Self::DoViewChange(r) => Debug::fmt(r, f),
+            Self::StartView(r) => Debug::fmt(r, f),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequestUnlogged<O> {
-    pub op: O,
+pub struct RequestUnlogged<UO> {
+    pub op: UO,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplyUnlogged<R> {
-    pub result: R,
+pub struct ReplyUnlogged<UR> {
+    pub result: UR,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProposeInconsistent<O> {
+pub struct ProposeInconsistent<IO> {
     pub op_id: OpId,
-    pub op: O,
+    pub op: IO,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProposeConsensus<O> {
+pub struct ProposeConsensus<CO> {
     pub op_id: OpId,
-    pub op: O,
+    pub op: CO,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,10 +77,10 @@ pub struct ReplyInconsistent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplyConsensus<R> {
+pub struct ReplyConsensus<CR> {
     pub op_id: OpId,
     pub view_number: ViewNumber,
-    pub result: R,
+    pub result: CR,
     pub state: RecordEntryState,
 }
 
@@ -60,9 +90,9 @@ pub struct FinalizeInconsistent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FinalizeConsensus<R> {
+pub struct FinalizeConsensus<CR> {
     pub op_id: OpId,
-    pub result: R,
+    pub result: CR,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,20 +102,37 @@ pub struct Confirm {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DoViewChange<O, R> {
+pub struct DoViewChange<IO, CO, CR> {
     pub view_number: ViewNumber,
-    pub addendum: Option<ViewChangeAddendum<O, R>>,
+    pub addendum: Option<ViewChangeAddendum<IO, CO, CR>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ViewChangeAddendum<O, R> {
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ViewChangeAddendum<IO, CO, CR> {
     pub replica_index: ReplicaIndex,
-    pub record: Record<O, R>,
+    pub record: RecordImpl<IO, CO, CR>,
     pub latest_normal_view: ViewNumber,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StartView<O, R> {
-    pub record: Record<O, R>,
+impl<IO, CO, CR> Debug for ViewChangeAddendum<IO, CO, CR> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Addendum")
+            .field("replica_index", &self.replica_index)
+            .field("latest_normal_view", &self.latest_normal_view)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct StartView<IO, CO, CR> {
+    pub record: RecordImpl<IO, CO, CR>,
     pub view_number: ViewNumber,
+}
+
+impl<IO, CO, CR> Debug for StartView<IO, CO, CR> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StartView")
+            .field("view_number", &self.view_number)
+            .finish_non_exhaustive()
+    }
 }

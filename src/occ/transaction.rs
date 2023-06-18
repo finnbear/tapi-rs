@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::tapir::{Key, Value};
 use crate::IrClientId;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -7,8 +8,12 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction<K: Hash + Eq, V, TS> {
+pub struct Transaction<K, V, TS> {
     pub read_set: HashMap<K, TS>,
+    #[serde(bound(
+        serialize = "K: Serialize, V: Serialize",
+        deserialize = "K: Deserialize<'de> + Eq + Hash, V: Deserialize<'de>"
+    ))]
     pub write_set: HashMap<K, Option<V>>,
 }
 
@@ -24,7 +29,7 @@ impl Debug for Id {
     }
 }
 
-impl<K: Hash + Eq, V, TS> Default for Transaction<K, V, TS> {
+impl<K: Key, V: Value, TS> Default for Transaction<K, V, TS> {
     fn default() -> Self {
         Self {
             read_set: Default::default(),
@@ -33,7 +38,7 @@ impl<K: Hash + Eq, V, TS> Default for Transaction<K, V, TS> {
     }
 }
 
-impl<K: Eq + Hash, V, TS> Transaction<K, V, TS> {
+impl<K: Key, V: Value, TS> Transaction<K, V, TS> {
     pub fn add_read(&mut self, key: K, timestamp: TS) {
         match self.read_set.entry(key) {
             Entry::Vacant(vacant) => {

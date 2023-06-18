@@ -1,7 +1,7 @@
 mod client;
+mod key_value;
+mod message;
 mod replica;
-mod reply;
-mod request;
 mod shard_client;
 mod timestamp;
 
@@ -9,8 +9,8 @@ mod timestamp;
 mod tests;
 
 pub use client::Client;
+pub use key_value::{Key, Value};
+pub use message::{CO, CR, IO, UO, UR};
 pub use replica::Replica;
-pub use reply::Reply;
-pub use request::Request;
 pub use shard_client::{ShardClient, ShardTransaction};
 pub use timestamp::Timestamp;

@@ -1,12 +1,11 @@
-use std::{collections::HashMap, fmt::Debug, hash::Hash};
-
-use super::{Reply, Request, Timestamp};
+use super::{Key, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::{
     IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult, OccStore, OccTransaction,
     OccTransactionId,
 };
+use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
-pub struct Replica<K: Hash + Eq, V> {
+pub struct Replica<K: Key, V: Value> {
     inner: OccStore<K, V, Timestamp>,
     /// Stores the commit timestamp, read/write sets, and commit status (true if committed) for
     /// all known committed and aborted transactions.
@@ -14,7 +13,7 @@ pub struct Replica<K: Hash + Eq, V> {
     no_vote_list: HashMap<OccTransactionId, Timestamp>,
 }
 
-impl<K: Hash + Eq, V> Replica<K, V> {
+impl<K: Key, V: Value> Replica<K, V> {
     pub fn new(linearizable: bool) -> Self {
         Self {
             inner: OccStore::new(linearizable),
@@ -24,31 +23,29 @@ impl<K: Hash + Eq, V> Replica<K, V> {
     }
 }
 
-impl<
-        K: Eq + Hash + Clone + Debug + Send + 'static,
-        V: Send + Clone + PartialEq + Debug + 'static,
-    > IrReplicaUpcalls for Replica<K, V>
-{
-    type Op = Request<K, V>;
-    type Result = Reply<V>;
+impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
+    type UO = UO<K>;
+    type UR = UR<V>;
+    type IO = IO<K, V>;
+    type CO = CO<K, V>;
+    type CR = CR;
 
-    fn exec_unlogged(&mut self, op: Self::Op) -> Self::Result {
+    fn exec_unlogged(&mut self, op: Self::UO) -> Self::UR {
         match op {
-            Request::Get { key, timestamp } => {
+            UO::Get { key, timestamp } => {
                 let (v, ts) = if let Some(timestamp) = timestamp {
                     self.inner.get_at(&key, timestamp)
                 } else {
                     self.inner.get(&key)
                 };
-                Reply::Get(v.cloned(), ts)
+                UR::Get(v.cloned(), ts)
             }
-            _ => unreachable!(),
         }
     }
 
-    fn exec_inconsistent(&mut self, op: &Self::Op) {
+    fn exec_inconsistent(&mut self, op: &Self::IO) {
         match op {
-            Request::Commit {
+            IO::Commit {
                 transaction_id,
                 transaction,
                 commit,
@@ -58,7 +55,7 @@ impl<
                 self.inner
                     .commit(*transaction_id, transaction.clone(), *commit);
             }
-            Request::Abort {
+            IO::Abort {
                 transaction_id,
                 transaction,
                 commit,
@@ -67,18 +64,16 @@ impl<
                     .insert(*transaction_id, (*commit, transaction.clone(), false));
                 self.inner.abort(*transaction_id);
             }
-            _ => unreachable!("unexpected {op:?}"),
         }
     }
 
-    fn exec_consensus(&mut self, op: &Self::Op) -> Self::Result {
-        if let Request::Prepare {
-            transaction_id,
-            transaction,
-            commit,
-        } = op
-        {
-            Reply::Prepare(
+    fn exec_consensus(&mut self, op: &Self::CO) -> Self::CR {
+        match op {
+            CO::Prepare {
+                transaction_id,
+                transaction,
+                commit,
+            } => CR::Prepare(
                 if let Some((_, _, commit)) = self.transaction_log.get(transaction_id) {
                     if *commit {
                         OccPrepareResult::Ok
@@ -89,17 +84,11 @@ impl<
                     self.inner
                         .prepare(*transaction_id, transaction.clone(), *commit)
                 },
-            )
-        } else {
-            unreachable!();
+            ),
         }
     }
 
-    fn sync(
-        &mut self,
-        local: &IrRecord<Self::Op, Self::Result>,
-        leader: &IrRecord<Self::Op, Self::Result>,
-    ) {
+    fn sync(&mut self, local: &IrRecord<Self>, leader: &IrRecord<Self>) {
         for (op_id, entry) in &leader.consensus {
             if local
                 .consensus
@@ -112,12 +101,12 @@ impl<
             }
 
             match &entry.op {
-                Request::Prepare {
+                CO::Prepare {
                     transaction_id,
                     transaction,
                     commit,
                 } => {
-                    if matches!(entry.result, Reply::Prepare(OccPrepareResult::Ok)) {
+                    if matches!(entry.result, CR::Prepare(OccPrepareResult::Ok)) {
                         if !self.inner.prepared.contains_key(transaction_id)
                             && !self.transaction_log.contains_key(transaction_id)
                         {
@@ -125,33 +114,11 @@ impl<
                                 .add_prepared(*transaction_id, transaction.clone(), *commit);
                         }
                     } else if self.inner.remove_prepared(*transaction_id)
-                        && matches!(entry.result, Reply::Prepare(OccPrepareResult::NoVote))
+                        && matches!(entry.result, CR::Prepare(OccPrepareResult::NoVote))
                         && !self.transaction_log.contains_key(&transaction_id)
                     {
                         self.no_vote_list.insert(*transaction_id, *commit);
                     }
-                }
-                Request::Commit {
-                    transaction_id,
-                    transaction,
-                    commit,
-                } => {
-                    self.inner
-                        .commit(*transaction_id, transaction.clone(), *commit);
-                    self.transaction_log
-                        .insert(*transaction_id, (*commit, transaction.clone(), true));
-                }
-                Request::Abort {
-                    transaction_id,
-                    transaction,
-                    commit,
-                } => {
-                    self.inner.abort(*transaction_id);
-                    self.transaction_log
-                        .insert(*transaction_id, (*commit, transaction.clone(), false));
-                }
-                Request::Get { .. } => {
-                    debug_assert!(false, "these are not replicated");
                 }
             }
         }
@@ -162,7 +129,7 @@ impl<
             }
 
             match &entry.op {
-                Request::Commit {
+                IO::Commit {
                     transaction_id,
                     transaction,
                     commit,
@@ -172,7 +139,7 @@ impl<
                     self.transaction_log
                         .insert(*transaction_id, (*commit, transaction.clone(), true));
                 }
-                Request::Abort {
+                IO::Abort {
                     transaction_id,
                     transaction,
                     commit,
@@ -188,27 +155,17 @@ impl<
 
     fn merge(
         &mut self,
-        d: HashMap<IrOpId, (Self::Op, Self::Result)>,
-        u: Vec<(IrOpId, Self::Op, Self::Result)>,
-    ) -> HashMap<IrOpId, Self::Result> {
-        let mut ret: HashMap<IrOpId, Self::Result> = HashMap::new();
+        d: HashMap<IrOpId, (Self::CO, Self::CR)>,
+        u: Vec<(IrOpId, Self::CO, Self::CR)>,
+    ) -> HashMap<IrOpId, Self::CR> {
+        let mut ret: HashMap<IrOpId, Self::CR> = HashMap::new();
         for (op_id, request) in u
             .iter()
             .map(|(op_id, op, _)| (op_id, op))
             .chain(d.iter().map(|(op_id, (op, _))| (op_id, op)))
         {
             match request {
-                Request::Prepare {
-                    transaction_id,
-                    transaction,
-                    ..
-                }
-                | Request::Commit {
-                    transaction_id,
-                    transaction,
-                    ..
-                }
-                | Request::Abort {
+                CO::Prepare {
                     transaction_id,
                     transaction,
                     ..
@@ -216,70 +173,50 @@ impl<
                     self.inner.remove_prepared(*transaction_id);
                     self.no_vote_list.remove(transaction_id);
                 }
-                Request::Get { .. } => {
-                    debug_assert!(false);
-                }
             }
         }
 
         for (op_id, (request, reply)) in &d {
             match request {
-                Request::Prepare {
-                    transaction_id,
-                    transaction,
-                    commit,
-                }
-                | Request::Commit {
-                    transaction_id,
-                    transaction,
-                    commit,
-                }
-                | Request::Abort {
+                CO::Prepare {
                     transaction_id,
                     transaction,
                     commit,
                 } => {
                     let reply = ret.insert(
                         *op_id,
-                        Reply::Prepare(if self.no_vote_list.contains_key(transaction_id) {
+                        CR::Prepare(if self.no_vote_list.contains_key(transaction_id) {
                             OccPrepareResult::NoVote
                         } else if !self.transaction_log.contains_key(transaction_id)
-                            && matches!(reply, Reply::Prepare(OccPrepareResult::Ok))
+                            && matches!(reply, CR::Prepare(OccPrepareResult::Ok))
                         {
                             self.inner
                                 .prepare(*transaction_id, transaction.clone(), *commit)
-                        } else if let Reply::Prepare(result) = reply {
-                            *result
                         } else {
-                            unreachable!();
+                            let CR::Prepare(result) = reply;
+                            *result
                         }),
                     );
-                }
-                Request::Get { .. } => {
-                    debug_assert!(false);
                 }
             }
         }
 
         for (op_id, request, _) in &u {
             match request {
-                Request::Prepare {
+                CO::Prepare {
                     transaction_id,
                     transaction,
                     commit,
                 } => {
                     ret.insert(
                         *op_id,
-                        Reply::Prepare(if self.no_vote_list.contains_key(transaction_id) {
+                        CR::Prepare(if self.no_vote_list.contains_key(transaction_id) {
                             OccPrepareResult::NoVote
                         } else {
                             self.inner
                                 .prepare(*transaction_id, transaction.clone(), *commit)
                         }),
                     );
-                }
-                _ => {
-                    debug_assert!(false);
                 }
             }
         }

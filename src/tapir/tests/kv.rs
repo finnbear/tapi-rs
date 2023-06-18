@@ -4,7 +4,7 @@ use rand::{thread_rng, Rng};
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
     IrMessage, IrOpId, IrRecord, IrRecordConsensusEntry, IrReplica, IrReplicaIndex,
-    IrReplicaUpcalls, TapirClient, TapirReplica, TapirReply, TapirRequest, Transport as _,
+    IrReplicaUpcalls, TapirClient, TapirReplica, Transport as _,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -32,9 +32,7 @@ async fn test_kv() {
 
 type K = i64;
 type V = i64;
-type Op = TapirRequest<K, V>;
-type Res = TapirReply<V>;
-type Message = IrMessage<Op, Res>;
+type Message = IrMessage<TapirReplica<K, V>>;
 type Transport = ChannelTransport<Message>;
 
 fn build_kv(

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{CoordinatorViewNumber, Timestamp, Transaction, TransactionId};
+use crate::tapir::{Key, Value};
 use crate::MvccStore;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -9,7 +10,7 @@ use std::hash::Hash;
 use std::ops::Bound;
 use std::{borrow::Borrow, collections::HashMap};
 
-pub struct Store<K: Hash + Eq, V, TS> {
+pub struct Store<K: Key, V: Value, TS> {
     linearizable: bool,
     inner: MvccStore<K, V, TS>,
     pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, CoordinatorViewNumber)>,
@@ -33,7 +34,7 @@ pub enum PrepareResult<TS: Timestamp> {
     NoVote,
 }
 
-impl<K: Hash + Eq, V, TS> Store<K, V, TS> {
+impl<K: Key, V: Value, TS> Store<K, V, TS> {
     pub fn new(linearizable: bool) -> Self {
         Self {
             linearizable,
@@ -45,7 +46,7 @@ impl<K: Hash + Eq, V, TS> Store<K, V, TS> {
     }
 }
 
-impl<K: Eq + Hash + Clone + Debug, V: Debug, TS: Timestamp> Store<K, V, TS> {
+impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
     pub fn get<Q: ?Sized + Eq + Hash>(&self, key: &Q) -> (Option<&V>, TS)
     where
         K: Borrow<Q>,
