@@ -288,7 +288,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                 let mut sync = self.inner.sync.lock().unwrap();
                 if sync.status.is_normal() {
                     if let Some(entry) = sync.record.consensus.get_mut(&op_id) {
-                        entry.state = RecordEntryState::Finalized;
+                        entry.state = RecordEntryState::Finalized(sync.view.number);
                         entry.result = result;
                         return Some(Message::<U>::Confirm(Confirm {
                             op_id,
@@ -344,6 +344,10 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
 
                             if matching.clone().count() >= threshold {
                                 eprintln!("DOING VIEW CHANGE");
+                                sync.changed_view_recently = true;
+                                sync.status = Status::Normal;
+                                sync.view.number = msg_view_number;
+                                sync.latest_normal_view = msg_view_number;
                                 {
                                     let latest_normal_view = sync.latest_normal_view.max(
                                         matching
@@ -380,7 +384,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                                                 }
                                                 Entry::Occupied(mut occupied) => {
                                                     if entry.state.is_finalized() {
-                                                        occupied.get_mut().state = RecordEntryState::Finalized;
+                                                        occupied.get_mut().state = RecordEntryState::Finalized(sync.view.number);
                                                     }
                                                 }
                                             }
@@ -455,17 +459,13 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                                             RecordConsensusEntry {
                                                 op: entry.op.clone(),
                                                 result: result.clone(),
-                                                state: RecordEntryState::Finalized,
+                                                state: RecordEntryState::Finalized(sync.view.number),
                                             },
                                         );
                                     }
 
                                     sync.record = R;
                                 }
-                                sync.changed_view_recently = true;
-                                sync.status = Status::Normal;
-                                sync.view.number = msg_view_number;
-                                sync.latest_normal_view = msg_view_number;
                                 self.persist_view_info(&*sync);
                                 for (index, address) in &sync.view.membership {
                                     if index == self.index {

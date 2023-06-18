@@ -1,17 +1,19 @@
-use super::{OpId, ReplicaUpcalls};
+use super::{OpId, ReplicaUpcalls, ViewNumber};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::HashMap, fmt::Debug};
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
 pub enum State {
-    Finalized,
+    /// Op was finalized within the given view.
+    Finalized(ViewNumber),
+    /// Op hasn't been finalized yet
     Tentative,
 }
 
 impl Debug for State {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Finalized => "Fin",
+            Self::Finalized(view) => write!(f, "Fin({view:?}"),
             Self::Tentative => "Tnt",
         })
     }
@@ -23,7 +25,7 @@ impl State {
     }
 
     pub fn is_finalized(&self) -> bool {
-        matches!(self, Self::Finalized)
+        matches!(self, Self::Finalized(_))
     }
 }
 
