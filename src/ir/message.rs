@@ -55,33 +55,47 @@ pub struct RequestUnlogged<UO> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplyUnlogged<UR> {
     pub result: UR,
+    /// Current view number, for priming the
+    /// client's ability to send `recent`.
+    pub view_number: ViewNumber,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProposeInconsistent<IO> {
     pub op_id: OpId,
     pub op: IO,
+    /// Highest view number known to the client,
+    /// used for identifying old messages and
+    /// starting view changes.
+    pub recent: ViewNumber,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProposeConsensus<CO> {
     pub op_id: OpId,
     pub op: CO,
+    /// Highest view number known to the client,
+    /// used for identifying old messages and
+    /// starting view changes.
+    pub recent: ViewNumber,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplyInconsistent {
     pub op_id: OpId,
     pub view_number: ViewNumber,
-    pub state: RecordEntryState,
+    /// If `None`, the request couldn't be processed because
+    /// `recent` wasn't recent.
+    pub state: Option<RecordEntryState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplyConsensus<CR> {
     pub op_id: OpId,
     pub view_number: ViewNumber,
-    pub result: CR,
-    pub state: RecordEntryState,
+    /// If `None`, the request couldn't be processed because
+    /// `recent` wasn't recent.
+    pub result_state: Option<(CR, RecordEntryState)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

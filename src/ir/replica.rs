@@ -224,13 +224,24 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                 let mut sync = self.inner.sync.lock().unwrap();
                 if sync.status.is_normal() {
                     let result = sync.upcalls.exec_unlogged(op);
-                    return Some(Message::<U>::ReplyUnlogged(ReplyUnlogged { result }));
+                    return Some(Message::<U>::ReplyUnlogged(ReplyUnlogged {
+                        result,
+                        view_number: sync.view.number,
+                    }));
                 }
             }
-            Message::<U>::ProposeInconsistent(ProposeInconsistent { op_id, op }) => {
+            Message::<U>::ProposeInconsistent(ProposeInconsistent { op_id, op, recent }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
                 if sync.status.is_normal() {
+                    if !recent.is_recent_relative_to(sync.view.number) {
+                        eprintln!("ancient relative to {:?}", sync.view.number);
+                        return Some(Message::<U>::ReplyInconsistent(ReplyInconsistent {
+                            op_id,
+                            view_number: sync.view.number,
+                            state: None,
+                        }));
+                    }
                     let entry =
                         sync.record
                             .inconsistent
@@ -243,14 +254,22 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                     return Some(Message::<U>::ReplyInconsistent(ReplyInconsistent {
                         op_id,
                         view_number: sync.view.number,
-                        state: entry.state,
+                        state: Some(entry.state),
                     }));
                 }
             }
-            Message::<U>::ProposeConsensus(ProposeConsensus { op_id, op }) => {
+            Message::<U>::ProposeConsensus(ProposeConsensus { op_id, op, recent }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
                 if sync.status.is_normal() {
+                    if !recent.is_recent_relative_to(sync.view.number) {
+                        eprintln!("ancient relative to {:?}", sync.view.number);
+                        return Some(Message::<U>::ReplyConsensus(ReplyConsensus {
+                            op_id,
+                            view_number: sync.view.number,
+                            result_state: None,
+                        }));
+                    }
                     let (result, state) = match sync.record.consensus.entry(op_id) {
                         Entry::Occupied(entry) => {
                             let entry = entry.get();
@@ -269,8 +288,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                     return Some(Message::<U>::ReplyConsensus(ReplyConsensus {
                         op_id,
                         view_number: sync.view.number,
-                        result,
-                        state,
+                        result_state: Some((result, state)),
                     }));
                 } else {
                     //println!("{:?} abnormal", self.index);

@@ -68,10 +68,11 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
                 let result = inner.prepare(timestamp).await;
 
                 if let OccPrepareResult::Retry { proposed } = &result && let Some(new_remaining_tries) = remaining_tries.checked_sub(1) {
+                    remaining_tries = new_remaining_tries;
+
                     let new_time =  inner.client.transport().time().max(proposed.saturating_add(1)).max(min_commit_timestamp);
                     if new_time != timestamp.time {
                         timestamp.time = new_time;
-                        remaining_tries = new_remaining_tries;
                         continue;
                     }
                 }

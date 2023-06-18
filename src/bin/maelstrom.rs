@@ -178,16 +178,11 @@ impl Transport for Maelstrom {
             is_reply_to: None,
         };
         //eprintln!("{} do-sending {message:?} to {address}", self.id);
-        let _ = self
-            .inner
-            .net
-            .txq
-            .try_send(Msg {
-                src: self.id.to_string(),
-                dest: address.to_string(),
-                body: Body::Application(message),
-            })
-            .unwrap();
+        let _ = self.inner.net.txq.send_blocking(Msg {
+            src: self.id.to_string(),
+            dest: address.to_string(),
+            body: Body::Application(message),
+        });
     }
 }
 

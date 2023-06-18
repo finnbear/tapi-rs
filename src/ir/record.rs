@@ -70,7 +70,18 @@ pub type Record<U> =
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecordImpl<IO, CO, CR> {
+    #[serde(
+        with = "vectorize",
+        bound(serialize = "IO: Serialize", deserialize = "IO: Deserialize<'de>")
+    )]
     pub inconsistent: HashMap<OpId, InconsistentEntry<IO>>,
+    #[serde(
+        with = "vectorize",
+        bound(
+            serialize = "CO: Serialize, CR: Serialize",
+            deserialize = "CO: Deserialize<'de>, CR: Deserialize<'de>"
+        )
+    )]
     pub consensus: HashMap<OpId, ConsensusEntry<CO, CR>>,
 }
 
