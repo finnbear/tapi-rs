@@ -1,19 +1,22 @@
-use super::{OpId, ReplicaUpcalls};
+use super::{OpId, ReplicaUpcalls, ViewNumber};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::HashMap, fmt::Debug};
 
+/// The state of a record entry according to a replica.
 #[derive(Copy, Clone, Serialize, Deserialize)]
 pub enum State {
-    Finalized,
+    /// Operation was applied at the replica in some view.
+    Finalized(ViewNumber),
+    /// Operation has not yet been applied at the replica.
     Tentative,
 }
 
 impl Debug for State {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Finalized => "Fin",
-            Self::Tentative => "Tnt",
-        })
+        match self {
+            Self::Finalized(view) => write!(f, "Fin({view:?})"),
+            Self::Tentative => f.write_str("Tnt"),
+        }
     }
 }
 
@@ -23,7 +26,7 @@ impl State {
     }
 
     pub fn is_finalized(&self) -> bool {
-        matches!(self, Self::Finalized)
+        matches!(self, Self::Finalized(_))
     }
 }
 

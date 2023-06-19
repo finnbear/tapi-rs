@@ -56,6 +56,9 @@ pub trait Upcalls: Sized + Send + 'static {
     fn exec_unlogged(&mut self, op: Self::UO) -> Self::UR;
     fn exec_inconsistent(&mut self, op: &Self::IO);
     fn exec_consensus(&mut self, op: &Self::CO) -> Self::CR;
+    /// In addition to the IR spec, this must not rely on the existence
+    /// of any ancient records (from before the last view change) in the
+    /// leader's record.
     fn sync(&mut self, local: &Record<Self>, leader: &Record<Self>);
     fn merge(
         &mut self,
@@ -233,6 +236,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
             Message::<U>::ProposeInconsistent(ProposeInconsistent { op_id, op, recent }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
+                let sync = &mut *sync;
                 if sync.status.is_normal() {
                     if !recent.is_recent_relative_to(sync.view.number) {
                         eprintln!("ancient relative to {:?}", sync.view.number);
@@ -298,16 +302,26 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                 let mut sync = self.inner.sync.lock().unwrap();
                 let sync = &mut *sync;
                 if sync.status.is_normal() && let Some(entry) = sync.record.inconsistent.get_mut(&op_id) && entry.state.is_tentative() {
-                    entry.state = RecordEntryState::Finalized;
+                    entry.state = RecordEntryState::Finalized(sync.view.number);
                     sync.upcalls.exec_inconsistent(&entry.op);
                 }
             }
             Message::<U>::FinalizeConsensus(FinalizeConsensus { op_id, result }) => {
                 let mut sync = self.inner.sync.lock().unwrap();
+                let sync = &mut *sync;
                 if sync.status.is_normal() {
                     if let Some(entry) = sync.record.consensus.get_mut(&op_id) {
-                        entry.state = RecordEntryState::Finalized;
-                        entry.result = result;
+                        // Here we diverge from TAPIR and avoid overwriting
+                        // finalized results, which can happen if a client
+                        // delays sending `FinalizeConsensus` with an old
+                        // result after a view change decides a new result.
+                        if entry.state.is_tentative() {
+                            entry.state = RecordEntryState::Finalized(sync.view.number);
+                            entry.result = result;
+                        }
+
+                        // Send `Confirm` regardless; the view number gives the
+                        // client enough information to retry if needed.
                         return Some(Message::<U>::Confirm(Confirm {
                             op_id,
                             view_number: sync.view.number,
@@ -333,11 +347,13 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                         );
                     }
 
+                    /*
                     eprintln!(
                         "index = {:?} , leader index = {:?}",
                         self.index,
                         sync.view.leader_index()
                     );
+                    */
 
                     if self.index == sync.view.leader_index() && let Some(addendum) = msg.addendum.as_ref() {
                         let msg_view_number = msg.view_number;
@@ -397,15 +413,16 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                                                     vacant.insert(entry);
                                                 }
                                                 Entry::Occupied(mut occupied) => {
-                                                    if entry.state.is_finalized() {
-                                                        occupied.get_mut().state = RecordEntryState::Finalized;
+                                                    if let RecordEntryState::Finalized(view) = entry.state {
+                                                        let state = &mut occupied.get_mut().state;
+                                                        *state = RecordEntryState::Finalized(view);
                                                     }
                                                 }
                                             }
                                         }
                                         for (op_id, entry) in r.consensus.clone() {
                                             match entry.state {
-                                                RecordEntryState::Finalized => {
+                                                RecordEntryState::Finalized(_) => {
                                                     R.consensus.insert(op_id, entry);
                                                     finalized.insert(op_id);
                                                     entries_by_opid.remove(&op_id);
@@ -473,7 +490,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                                             RecordConsensusEntry {
                                                 op: entry.op.clone(),
                                                 result: result.clone(),
-                                                state: RecordEntryState::Finalized,
+                                                state: RecordEntryState::Finalized(sync.view.number),
                                             },
                                         );
                                     }

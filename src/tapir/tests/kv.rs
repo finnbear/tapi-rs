@@ -225,8 +225,10 @@ async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize)
                         attempted.fetch_add(1, Ordering::Relaxed);
                         committed.fetch_add(c, Ordering::Relaxed);
 
-                        tokio::time::sleep(Duration::from_millis(thread_rng().gen_range(1..1000)))
-                            .await;
+                        tokio::time::sleep(Duration::from_millis(
+                            thread_rng().gen_range(1..=num_clients as u64),
+                        ))
+                        .await;
                     }
                 });
             }
