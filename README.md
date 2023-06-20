@@ -34,3 +34,7 @@ Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-
   - [x] TAPIR-KV (simple)
   - [x] TAPIR-KV (maelstrom)
   - [ ] Exhaustive state enumeration
+
+  ## Acknowledgement
+
+  Thank you to the TAPIR authors for answering my questions about the paper!

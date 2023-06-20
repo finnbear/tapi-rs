@@ -311,10 +311,8 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                 let sync = &mut *sync;
                 if sync.status.is_normal() {
                     if let Some(entry) = sync.record.consensus.get_mut(&op_id) {
-                        // Here we diverge from TAPIR and avoid overwriting
-                        // finalized results, which can happen if a client
-                        // delays sending `FinalizeConsensus` with an old
-                        // result after a view change decides a new result.
+                        // Don't allow a late `FinalizeConsensus` to overwrite
+                        // a view change decision.
                         if entry.state.is_tentative() {
                             entry.state = RecordEntryState::Finalized(sync.view.number);
                             entry.result = result;
