@@ -77,7 +77,9 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Debug for Replica<U, T> {
         if let Ok(sync) = self.inner.sync.try_lock() {
             s.field("stat", &sync.status);
             s.field("view", &sync.view.number);
-            s.field("last_norm_view", &sync.latest_normal_view);
+            s.field("norm", &sync.latest_normal_view);
+            s.field("inc", &sync.record.inconsistent.len());
+            s.field("con", &sync.record.consensus.len());
         }
         s.finish_non_exhaustive()
     }

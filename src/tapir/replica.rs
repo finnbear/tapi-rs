@@ -21,8 +21,17 @@ pub struct Replica<K, V> {
         )
     )]
     transaction_log: HashMap<OccTransactionId, (Timestamp, OccTransaction<K, V, Timestamp>, bool)>,
+    /// Transactions that a backup coordinator may abort.
     #[serde(with = "vectorize")]
     no_vote_list: HashMap<OccTransactionId, Timestamp>,
+    /// Extension to TAPIR: Garbage collection watermark time.
+    /// - All transactions before this are committed.
+    /// - Must not prepare transactions before this.
+    /// - May (at any time) garbage collect MVCC versions
+    ///   that are invalid at and after this.
+    /// - May (at any time) garbage collect keys with
+    ///   a tombstone valid at and after this.
+    gc_watermark: u64,
 }
 
 impl<K: Key, V: Value> Replica<K, V> {
@@ -31,6 +40,7 @@ impl<K: Key, V: Value> Replica<K, V> {
             inner: OccStore::new(linearizable),
             transaction_log: HashMap::new(),
             no_vote_list: HashMap::new(),
+            gc_watermark: 0,
         }
     }
 }
