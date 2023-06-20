@@ -511,6 +511,10 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                                         }),
                                     );
                                 }
+                                self.inner.transport.persist(
+                                    &format!("checkpoint_{}", sync.view.number.0),
+                                    Some(&sync.upcalls),
+                                );
                                 break;
                             }
                         }

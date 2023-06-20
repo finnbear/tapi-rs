@@ -30,7 +30,10 @@ pub trait Transport: Clone + Send + Sync + 'static {
     /// Sleep for duration.
     fn sleep(duration: Duration) -> Self::Sleep;
 
-    /// Synchronously persist a key-value pair.
+    /// Synchronously persist a key-value pair. Any future calls
+    /// to `persisted` should return this value unless/until it
+    /// is overwritten.
+    // TODO: Allow safe expiration mechanism for checkpoints.
     fn persist<T: Serialize>(&self, key: &str, value: Option<&T>);
 
     /// Synchronously load a persisted key-value pair.

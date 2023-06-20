@@ -1,4 +1,5 @@
 use super::{Key, Timestamp, Value, CO, CR, IO, UO, UR};
+use crate::util::vectorize;
 use crate::{
     IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult, OccStore, OccTransaction,
     OccTransactionId,
@@ -12,8 +13,15 @@ pub struct Replica<K, V> {
     inner: OccStore<K, V, Timestamp>,
     /// Stores the commit timestamp, read/write sets, and commit status (true if committed) for
     /// all known committed and aborted transactions.
-    #[serde(bound(deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>"))]
+    #[serde(
+        with = "vectorize",
+        bound(
+            serialize = "K: Serialize, V: Serialize",
+            deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>"
+        )
+    )]
     transaction_log: HashMap<OccTransactionId, (Timestamp, OccTransaction<K, V, Timestamp>, bool)>,
+    #[serde(with = "vectorize")]
     no_vote_list: HashMap<OccTransactionId, Timestamp>,
 }
 

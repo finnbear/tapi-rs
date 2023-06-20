@@ -1,9 +1,10 @@
+use crate::util::{vectorize, vectorize_btree};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
     hash::Hash,
-    ops::Bound,
+    ops::{Bound, Deref, DerefMut},
     time,
 };
 
@@ -14,10 +15,48 @@ pub struct Store<K, V, TS> {
     ///
     /// For all keys, there is an implicit version (TS::default() => (None, None)),
     /// in other words the key was nonexistent at the beginning of time.
-    #[serde(bound(
-        deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>, TS: Deserialize<'de> + Ord"
-    ))]
-    inner: HashMap<K, BTreeMap<TS, (Option<V>, Option<TS>)>>,
+    #[serde(
+        with = "vectorize",
+        bound(
+            serialize = "K: Serialize, V: Serialize, TS: Serialize",
+            deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>, TS: Deserialize<'de> + Ord"
+        )
+    )]
+    inner: HashMap<K, Versions<V, TS>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Versions<V, TS> {
+    #[serde(
+        with = "vectorize_btree",
+        bound(
+            serialize = "V: Serialize, TS: Serialize",
+            deserialize = "V: Deserialize<'de>, TS: Deserialize<'de> + Ord"
+        )
+    )]
+    inner: BTreeMap<TS, (Option<V>, Option<TS>)>,
+}
+
+impl<V, TS> Default for Versions<V, TS> {
+    fn default() -> Self {
+        Self {
+            inner: Default::default(),
+        }
+    }
+}
+
+impl<V, TS> Deref for Versions<V, TS> {
+    type Target = BTreeMap<TS, (Option<V>, Option<TS>)>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<V, TS> DerefMut for Versions<V, TS> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
 }
 
 impl<K, V, TS> Default for Store<K, V, TS> {

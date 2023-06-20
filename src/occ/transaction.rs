@@ -1,19 +1,29 @@
+use crate::{
+    tapir::{Key, Value},
+    util::vectorize,
+    IrClientId,
+};
 use serde::{Deserialize, Serialize};
-
-use crate::tapir::{Key, Value};
-use crate::IrClientId;
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::Hash;
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    fmt::Debug,
+    hash::Hash,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction<K, V, TS> {
+    #[serde(
+        with = "vectorize",
+        bound(serialize = "TS: Serialize", deserialize = "TS: Deserialize<'de>")
+    )]
     pub read_set: HashMap<K, TS>,
-    #[serde(bound(
-        serialize = "K: Serialize, V: Serialize",
-        deserialize = "K: Deserialize<'de> + Eq + Hash, V: Deserialize<'de>"
-    ))]
+    #[serde(
+        with = "vectorize",
+        bound(
+            serialize = "K: Serialize, V: Serialize",
+            deserialize = "K: Deserialize<'de> + Eq + Hash, V: Deserialize<'de>"
+        )
+    )]
     pub write_set: HashMap<K, Option<V>>,
 }
 

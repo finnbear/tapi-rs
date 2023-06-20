@@ -1,26 +1,69 @@
 use super::{CoordinatorViewNumber, Timestamp, Transaction, TransactionId};
-use crate::tapir::{Key, Value};
-use crate::MvccStore;
+use crate::{
+    tapir::{Key, Value},
+    util::{vectorize, vectorize_btree},
+    MvccStore,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::ops::Bound;
-use std::{borrow::Borrow, collections::HashMap};
+use std::{
+    borrow::Borrow,
+    collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet},
+    fmt::Debug,
+    hash::Hash,
+    ops::{Bound, Deref, DerefMut},
+};
 
 #[derive(Serialize, Deserialize)]
 pub struct Store<K, V, TS> {
     linearizable: bool,
     #[serde(bound(
+        serialize = "K: Serialize, V: Serialize, TS: Serialize",
         deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>, TS: Deserialize<'de> + Ord"
     ))]
     inner: MvccStore<K, V, TS>,
+    #[serde(with = "vectorize")]
     pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, CoordinatorViewNumber)>,
     // Cache.
-    prepared_reads: HashMap<K, BTreeMap<TS, ()>>,
+    #[serde(with = "vectorize", bound(deserialize = "TS: Deserialize<'de> + Ord"))]
+    prepared_reads: HashMap<K, TimestampSet<TS>>,
     // Cache.
-    prepared_writes: HashMap<K, BTreeMap<TS, ()>>,
+    #[serde(with = "vectorize")]
+    prepared_writes: HashMap<K, TimestampSet<TS>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TimestampSet<TS> {
+    /// Use a map in order to use APIs sets don't have.
+    #[serde(
+        with = "vectorize_btree",
+        bound(
+            serialize = "TS: Serialize",
+            deserialize = "TS: Deserialize<'de> + Ord"
+        )
+    )]
+    inner: BTreeMap<TS, ()>,
+}
+
+impl<TS> Default for TimestampSet<TS> {
+    fn default() -> Self {
+        Self {
+            inner: Default::default(),
+        }
+    }
+}
+
+impl<TS> Deref for TimestampSet<TS> {
+    type Target = BTreeMap<TS, ()>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<TS> DerefMut for TimestampSet<TS> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy, Serialize, Deserialize)]

@@ -109,7 +109,13 @@ impl<M: Message> Transport for Channel<M> {
         let mut persistent = self.persistent.lock().unwrap();
         if let Some(value) = value {
             let string = serde_json::to_string(&value).unwrap();
-            // println!("{} persisting {key} = {string}", self.address);
+            let display = if string.len() > 100 {
+                let with_bc = bitcode::serialize(&value).unwrap();
+                format!("<{} bytes ({} with bitcode)>", string.len(), with_bc.len())
+            } else {
+                string.clone()
+            };
+            eprintln!("{} persisting {key} = {display}", self.address);
             persistent.insert(key.to_owned(), string);
         } else {
             persistent.remove(key);
