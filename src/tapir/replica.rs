@@ -3,12 +3,16 @@ use crate::{
     IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult, OccStore, OccTransaction,
     OccTransactionId,
 };
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
-pub struct Replica<K: Key, V: Value> {
+#[derive(Serialize, Deserialize)]
+pub struct Replica<K, V> {
+    #[serde(bound(deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>"))]
     inner: OccStore<K, V, Timestamp>,
     /// Stores the commit timestamp, read/write sets, and commit status (true if committed) for
     /// all known committed and aborted transactions.
+    #[serde(bound(deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>"))]
     transaction_log: HashMap<OccTransactionId, (Timestamp, OccTransaction<K, V, Timestamp>, bool)>,
     no_vote_list: HashMap<OccTransactionId, Timestamp>,
 }

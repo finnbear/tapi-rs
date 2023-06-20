@@ -1,8 +1,7 @@
-use serde::{Deserialize, Serialize};
-
 use super::{CoordinatorViewNumber, Timestamp, Transaction, TransactionId};
 use crate::tapir::{Key, Value};
 use crate::MvccStore;
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Debug;
@@ -10,8 +9,12 @@ use std::hash::Hash;
 use std::ops::Bound;
 use std::{borrow::Borrow, collections::HashMap};
 
-pub struct Store<K: Key, V: Value, TS> {
+#[derive(Serialize, Deserialize)]
+pub struct Store<K, V, TS> {
     linearizable: bool,
+    #[serde(bound(
+        deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>, TS: Deserialize<'de> + Ord"
+    ))]
     inner: MvccStore<K, V, TS>,
     pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, CoordinatorViewNumber)>,
     // Cache.

@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
@@ -6,13 +7,16 @@ use std::{
     time,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Store<K, V, TS> {
     /// For each timestamped version of a key, track the
     /// value (or tombstone) and the optional read timestamp.
     ///
     /// For all keys, there is an implicit version (TS::default() => (None, None)),
     /// in other words the key was nonexistent at the beginning of time.
+    #[serde(bound(
+        deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>, TS: Deserialize<'de> + Ord"
+    ))]
     inner: HashMap<K, BTreeMap<TS, (Option<V>, Option<TS>)>>,
 }
 

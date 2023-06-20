@@ -1,5 +1,3 @@
-use serde::{Deserialize, Serialize};
-
 use super::{
     message::ViewChangeAddendum, record::Consistency, Confirm, DoViewChange, FinalizeConsensus,
     FinalizeInconsistent, Membership, Message, OpId, ProposeConsensus, ProposeInconsistent, Record,
@@ -7,6 +5,7 @@ use super::{
     ReplyInconsistent, ReplyUnlogged, RequestUnlogged, StartView, View, ViewNumber,
 };
 use crate::{Transport, TransportMessage};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
@@ -41,7 +40,7 @@ impl Status {
     }
 }
 
-pub trait Upcalls: Sized + Send + 'static {
+pub trait Upcalls: Sized + Send + Serialize + DeserializeOwned + 'static {
     /// Unlogged operation.
     type UO: TransportMessage;
     /// Unlogged result.

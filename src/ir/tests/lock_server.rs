@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
     IrMessage, IrOpId, IrRecord, IrRecordConsensusEntry, IrReplica, IrReplicaIndex,
@@ -37,6 +39,7 @@ async fn lock_server(num_replicas: usize) {
 
     type Message = IrMessage<Upcalls>;
 
+    #[derive(Serialize, Deserialize)]
     struct Upcalls {
         locked: Option<IrClientId>,
     }
