@@ -21,6 +21,7 @@ pub enum UR<V> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IO<K, V> {
+    /// Commit a successfully prepared transaction.
     Commit {
         transaction_id: OccTransactionId,
         /// Same as successfully prepared transaction.
@@ -28,6 +29,7 @@ pub enum IO<K, V> {
         /// Same as successfully prepared commit timestamp.
         commit: Timestamp,
     },
+    /// Abort an unsuccessfully prepared transaction.
     Abort {
         transaction_id: OccTransactionId,
         /// Same as unsuccessfully prepared transaction.

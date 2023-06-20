@@ -115,16 +115,22 @@ pub struct Confirm {
     pub view_number: ViewNumber,
 }
 
+/// Informs a replica about a new view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DoViewChange<IO, CO, CR> {
+    /// View number to change to.
     pub view_number: ViewNumber,
+    /// Is `Some` when sent from replica to new leader.
     pub addendum: Option<ViewChangeAddendum<IO, CO, CR>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ViewChangeAddendum<IO, CO, CR> {
+    /// Sender replica's index.
     pub replica_index: ReplicaIndex,
+    /// Sender replica's record.
     pub record: RecordImpl<IO, CO, CR>,
+    /// Latest view in which sender replica had a normal state.
     pub latest_normal_view: ViewNumber,
 }
 
@@ -137,9 +143,12 @@ impl<IO, CO, CR> Debug for ViewChangeAddendum<IO, CO, CR> {
     }
 }
 
+/// From leader to inform a replica that a new view has begun.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct StartView<IO, CO, CR> {
+    /// Leader's merged record.
     pub record: RecordImpl<IO, CO, CR>,
+    /// New view number.
     pub view_number: ViewNumber,
 }
 
