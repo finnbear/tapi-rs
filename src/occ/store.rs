@@ -78,6 +78,15 @@ pub enum PrepareResult<TS: Timestamp> {
     Fail,
     /// Used for coordinator recovery purposes.
     NoVote,
+    /// The commit time is too old (would be or was already garbage collected).
+    ///
+    /// It isn't known whether such transactions were prepared, committed, or aborted.
+    /// - Clients can safely hang i.e. while polling more replicas, or return an
+    ///   indeterminate result.
+    /// - Backup coordinators can safely give up (transaction guaranteed to have
+    ///   committed or aborted already).
+    /// - Merging replicas can safely self-destruct (TODO: is there a better option?)
+    TooOld,
 }
 
 impl<K: Key, V: Value, TS> Store<K, V, TS> {

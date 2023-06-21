@@ -25,7 +25,7 @@ pub struct Replica<K, V> {
     #[serde(with = "vectorize")]
     no_vote_list: HashMap<OccTransactionId, Timestamp>,
     /// Extension to TAPIR: Garbage collection watermark time.
-    /// - All transactions before this are committed.
+    /// - All transactions before this are committed/aborted.
     /// - Must not prepare transactions before this.
     /// - May (at any time) garbage collect MVCC versions
     ///   that are invalid at and after this.

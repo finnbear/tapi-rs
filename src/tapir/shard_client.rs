@@ -169,7 +169,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
                         OccPrepareResult::Fail => {
                             return CR::Prepare(OccPrepareResult::Fail);
                         }
-                        OccPrepareResult::NoVote => unimplemented!(),
+                        OccPrepareResult::NoVote | OccPrepareResult::TooOld => unimplemented!(),
                     }
                 }
 
