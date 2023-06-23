@@ -21,8 +21,10 @@ pub struct Store<K, V, TS> {
         deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>, TS: Deserialize<'de> + Ord"
     ))]
     inner: MvccStore<K, V, TS>,
+    /// Transactions which may commit in the future (and whether they are undergoing
+    /// coordinator recovery).
     #[serde(with = "vectorize")]
-    pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, CoordinatorViewNumber)>,
+    pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, bool)>,
     // Cache.
     #[serde(with = "vectorize", bound(deserialize = "TS: Deserialize<'de> + Ord"))]
     prepared_reads: HashMap<K, TimestampSet<TS>>,

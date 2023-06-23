@@ -7,6 +7,9 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
+/// Diverge from TAPIR and don't maintain a no-vote list. Instead, wait for a
+/// view change to syncronize each participant shard's prepare result and then
+/// let one or more of many possible backup coordinators take them at face-value.
 #[derive(Serialize, Deserialize)]
 pub struct Replica<K, V> {
     #[serde(bound(deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>"))]
@@ -21,9 +24,6 @@ pub struct Replica<K, V> {
         )
     )]
     transaction_log: HashMap<OccTransactionId, (Timestamp, OccTransaction<K, V, Timestamp>, bool)>,
-    /// Transactions that a backup coordinator may abort.
-    #[serde(with = "vectorize")]
-    no_vote_list: HashMap<OccTransactionId, Timestamp>,
     /// Extension to TAPIR: Garbage collection watermark time.
     /// - All transactions before this are committed/aborted.
     /// - Must not prepare transactions before this.
@@ -39,7 +39,6 @@ impl<K: Key, V: Value> Replica<K, V> {
         Self {
             inner: OccStore::new(linearizable),
             transaction_log: HashMap::new(),
-            no_vote_list: HashMap::new(),
             gc_watermark: 0,
         }
     }
@@ -95,18 +94,22 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transaction_id,
                 transaction,
                 commit,
-            } => CR::Prepare(
-                if let Some((_, _, commit)) = self.transaction_log.get(transaction_id) {
-                    if *commit {
-                        OccPrepareResult::Ok
-                    } else {
-                        OccPrepareResult::Fail
-                    }
+            } => CR::Prepare(if *commit < self.gc_watermark {
+                // In theory, could check the other conditions first, but
+                // that might hide bugs.
+                OccPrepareResult::TooOld
+            } else if self.no_vote_list.contains_key(transaction_id) {
+                OccPrepareResult::NoVote
+            } else if let Some((_, _, commit)) = self.transaction_log.get(transaction_id) {
+                if *commit {
+                    OccPrepareResult::Ok
                 } else {
-                    self.inner
-                        .prepare(*transaction_id, transaction.clone(), *commit)
-                },
-            ),
+                    OccPrepareResult::Fail
+                }
+            } else {
+                self.inner
+                    .prepare(*transaction_id, transaction.clone(), *commit)
+            }),
         }
     }
 
@@ -132,6 +135,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                         if !self.inner.prepared.contains_key(transaction_id)
                             && !self.transaction_log.contains_key(transaction_id)
                         {
+                            // Enough other replicas agreed to prepare
+                            // the transaction so it must be okay.
                             self.inner
                                 .add_prepared(*transaction_id, transaction.clone(), *commit);
                         }
@@ -139,6 +144,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                         && matches!(entry.result, CR::Prepare(OccPrepareResult::NoVote))
                         && !self.transaction_log.contains_key(&transaction_id)
                     {
+                        // This replica prepared the transaction but, according to the
+                        // leader, the backup coordinator may abort it.
                         self.no_vote_list.insert(*transaction_id, *commit);
                     }
                 }
