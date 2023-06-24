@@ -1,4 +1,4 @@
-use super::{CoordinatorViewNumber, Timestamp, Transaction, TransactionId};
+use super::{Timestamp, Transaction, TransactionId};
 use crate::{
     tapir::{Key, Value},
     util::{vectorize, vectorize_btree},
@@ -78,8 +78,8 @@ pub enum PrepareResult<TS: Timestamp> {
     Abstain,
     /// There was a conflict with a committed transaction.
     Fail,
-    /// Used for coordinator recovery purposes.
-    NoVote,
+    /// It is too late to prepare with this commit timestamp.
+    TooLate,
     /// The commit time is too old (would be or was already garbage collected).
     ///
     /// It isn't known whether such transactions were prepared, committed, or aborted.

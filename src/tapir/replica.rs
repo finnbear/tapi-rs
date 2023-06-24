@@ -32,6 +32,8 @@ pub struct Replica<K, V> {
     /// - May (at any time) garbage collect keys with
     ///   a tombstone valid at and after this.
     gc_watermark: u64,
+    /// Minimum acceptable prepare time.
+    min_prepare_time: u64,
 }
 
 impl<K: Key, V: Value> Replica<K, V> {
@@ -40,6 +42,7 @@ impl<K: Key, V: Value> Replica<K, V> {
             inner: OccStore::new(linearizable),
             transaction_log: HashMap::new(),
             gc_watermark: 0,
+            min_prepare_time: 0,
         }
     }
 }
@@ -94,22 +97,52 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transaction_id,
                 transaction,
                 commit,
-            } => CR::Prepare(if *commit < self.gc_watermark {
+            } => CR::Prepare(if commit.time < self.gc_watermark {
                 // In theory, could check the other conditions first, but
                 // that might hide bugs.
                 OccPrepareResult::TooOld
-            } else if self.no_vote_list.contains_key(transaction_id) {
-                OccPrepareResult::NoVote
-            } else if let Some((_, _, commit)) = self.transaction_log.get(transaction_id) {
-                if *commit {
-                    OccPrepareResult::Ok
+            } else if let Some((ts, _, committed)) = self.transaction_log.get(transaction_id) {
+                if *committed {
+                    if commit == ts {
+                        // Already committed at this timestamp.
+                        OccPrepareResult::Ok
+                    } else {
+                        // Committed at a different timestamp.
+                        OccPrepareResult::Retry { proposed: ts.time }
+                    }
                 } else {
+                    // Already aborted or committed at a different timestamp.
                     OccPrepareResult::Fail
                 }
+            } else if self
+                .inner
+                .prepared
+                .get(transaction_id)
+                .map(|(c, _, _)| c == commit)
+                .unwrap_or(false)
+            {
+                // Already prepared at this timestamp.
+                OccPrepareResult::Ok
+            } else if commit.time < self.min_prepare_time
+                || self
+                    .inner
+                    .prepared
+                    .get(transaction_id)
+                    .map(|(c, _, _)| c.time < self.min_prepare_time)
+                    .unwrap_or(false)
+            {
+                // Too late to prepare or reprepare.
+                OccPrepareResult::TooLate
             } else {
                 self.inner
                     .prepare(*transaction_id, transaction.clone(), *commit)
             }),
+            CO::RaiseMinPrepareTime { time } => {
+                self.min_prepare_time = self.min_prepare_time.max(*time);
+                CR::RaiseMinPrepareTime {
+                    time: self.min_prepare_time,
+                }
+            }
         }
     }
 
@@ -140,13 +173,15 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                             self.inner
                                 .add_prepared(*transaction_id, transaction.clone(), *commit);
                         }
-                    } else if self.inner.remove_prepared(*transaction_id)
-                        && matches!(entry.result, CR::Prepare(OccPrepareResult::NoVote))
-                        && !self.transaction_log.contains_key(&transaction_id)
-                    {
-                        // This replica prepared the transaction but, according to the
-                        // leader, the backup coordinator may abort it.
-                        self.no_vote_list.insert(*transaction_id, *commit);
+                    } else {
+                        self.inner.remove_prepared(*transaction_id);
+                    }
+                }
+                CO::RaiseMinPrepareTime { .. } => {
+                    if let CR::RaiseMinPrepareTime { time } = &entry.result {
+                        self.min_prepare_time = self.min_prepare_time.max(*time);
+                    } else {
+                        debug_assert!(false);
                     }
                 }
             }
@@ -200,8 +235,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     ..
                 } => {
                     self.inner.remove_prepared(*transaction_id);
-                    self.no_vote_list.remove(transaction_id);
                 }
+                CO::RaiseMinPrepareTime { .. } => {}
             }
         }
 
@@ -212,19 +247,43 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     transaction,
                     commit,
                 } => {
-                    let reply = ret.insert(
+                    ret.insert(
                         *op_id,
-                        CR::Prepare(if self.no_vote_list.contains_key(transaction_id) {
-                            OccPrepareResult::NoVote
-                        } else if !self.transaction_log.contains_key(transaction_id)
-                            && matches!(reply, CR::Prepare(OccPrepareResult::Ok))
-                        {
-                            self.inner
-                                .prepare(*transaction_id, transaction.clone(), *commit)
-                        } else {
-                            let CR::Prepare(result) = reply;
-                            *result
-                        }),
+                        CR::Prepare(
+                            if commit.time < self.min_prepare_time
+                                || self
+                                    .inner
+                                    .prepared
+                                    .get(transaction_id)
+                                    .map(|(c, _, _)| c.time < self.min_prepare_time)
+                                    .unwrap_or(false)
+                            {
+                                OccPrepareResult::TooLate
+                            } else if !self.transaction_log.contains_key(transaction_id)
+                                && matches!(reply, CR::Prepare(OccPrepareResult::Ok))
+                            {
+                                self.inner
+                                    .prepare(*transaction_id, transaction.clone(), *commit)
+                            } else if let CR::Prepare(result) = reply {
+                                *result
+                            } else {
+                                debug_assert!(false);
+                                OccPrepareResult::Abstain
+                            },
+                        ),
+                    );
+                }
+                CO::RaiseMinPrepareTime { time } => {
+                    ret.insert(
+                        *op_id,
+                        CR::RaiseMinPrepareTime {
+                            time: if let CR::RaiseMinPrepareTime { time } = reply {
+                                *time
+                            } else {
+                                debug_assert!(false);
+                                *time
+                            },
+                        },
                     );
                 }
             }
@@ -239,12 +298,30 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 } => {
                     ret.insert(
                         *op_id,
-                        CR::Prepare(if self.no_vote_list.contains_key(transaction_id) {
-                            OccPrepareResult::NoVote
+                        CR::Prepare(if commit.time < self.gc_watermark {
+                            OccPrepareResult::TooOld
+                        } else if commit.time < self.min_prepare_time
+                            || self
+                                .inner
+                                .prepared
+                                .get(transaction_id)
+                                .map(|(c, _, _)| c.time < self.min_prepare_time)
+                                .unwrap_or(false)
+                        {
+                            OccPrepareResult::TooLate
                         } else {
                             self.inner
                                 .prepare(*transaction_id, transaction.clone(), *commit)
                         }),
+                    );
+                }
+                CO::RaiseMinPrepareTime { time } => {
+                    self.min_prepare_time = self.min_prepare_time.max(*time);
+                    ret.insert(
+                        *op_id,
+                        CR::RaiseMinPrepareTime {
+                            time: self.min_prepare_time,
+                        },
                     );
                 }
             }

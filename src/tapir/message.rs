@@ -48,19 +48,16 @@ pub enum CO<K, V> {
         /// Transaction to prepare.
         #[serde(bound(deserialize = "K: Eq + Deserialize<'de> + Hash, V: Deserialize<'de>"))]
         transaction: OccTransaction<K, V, Timestamp>,
-        /// Proposed commit timestamp when proposed by clients, or `None`
-        /// when (re)proposed by backup coordinators.
-        commit: Option<Timestamp>,
-    },
-    CoordinatorChange {
-        /// Id of transaction to change coordinator of.
-        transaction_id: OccTransactionId,
-        /// Same as possibly prepared commit timestamp.
+        /// Proposed commit timestamp.
         commit: Timestamp,
+    },
+    RaiseMinPrepareTime {
+        time: u64,
     },
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum CR {
     Prepare(OccPrepareResult<Timestamp>),
+    RaiseMinPrepareTime { time: u64 },
 }
