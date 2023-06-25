@@ -257,3 +257,28 @@ async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize)
         })
         .await;
 }
+
+#[tokio::test]
+async fn coordinator_recovery() {
+    let (replicas, clients) = build_kv(true, 3, 2);
+
+    let txn = clients[0].begin();
+    txn.put(0, Some(42));
+    txn.commit_inner(true).await;
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    for i in 0..100 {
+        let txn = clients[1].begin();
+        let read = txn.get(0).await;
+        println!("try {i} read {read:?}");
+        let committed = txn.commit().await.is_some();
+        if committed {
+            return;
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    panic!("never recovered");
+}

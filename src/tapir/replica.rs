@@ -1,11 +1,11 @@
 use super::{Key, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::util::vectorize;
 use crate::{
-    IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult, OccStore, OccTransaction,
-    OccTransactionId,
+    IrClient, IrMembership, IrMessage, IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult,
+    OccStore, OccTransaction, OccTransactionId, Transport,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Debug, hash::Hash};
+use std::{collections::HashMap, fmt::Debug, future::Future, hash::Hash};
 
 /// Diverge from TAPIR and don't maintain a no-vote list. Instead, wait for a
 /// view change to syncronize each participant shard's prepare result and then
@@ -43,6 +43,104 @@ impl<K: Key, V: Value> Replica<K, V> {
             transaction_log: HashMap::new(),
             gc_watermark: 0,
             min_prepare_time: 0,
+        }
+    }
+
+    fn recover_coordination<T: Transport<Message = IrMessage<Self>>>(
+        transaction_id: OccTransactionId,
+        transaction: OccTransaction<K, V, Timestamp>,
+        commit: Timestamp,
+        membership: IrMembership<T>,
+        transport: T,
+    ) -> impl Future<Output = ()> {
+        let client = IrClient::<Self, T>::new(membership, transport);
+        async move {
+            client
+                .invoke_consensus(
+                    CO::RaiseMinPrepareTime {
+                        time: commit.time + 1,
+                    },
+                    |results, size| CR::RaiseMinPrepareTime {
+                        time: results
+                            .keys()
+                            .filter_map(|r| {
+                                if let CR::RaiseMinPrepareTime { time } = r {
+                                    Some(*time)
+                                } else {
+                                    debug_assert!(false);
+                                    None
+                                }
+                            })
+                            .max()
+                            .unwrap_or_default(),
+                    },
+                )
+                .await;
+
+            let result = client
+                .invoke_consensus(
+                    CO::Prepare {
+                        transaction_id,
+                        transaction: transaction.clone(),
+                        commit,
+                        backup: true,
+                    },
+                    |results, membership| {
+                        CR::Prepare(
+                            if results.contains_key(&CR::Prepare(OccPrepareResult::Fail)) {
+                                OccPrepareResult::Fail
+                            } else if results
+                                .get(&CR::Prepare(OccPrepareResult::TooLate))
+                                .copied()
+                                .unwrap_or_default()
+                                >= membership.f_plus_one()
+                            {
+                                OccPrepareResult::Fail
+                            } else if results
+                                .get(&CR::Prepare(OccPrepareResult::Ok))
+                                .copied()
+                                .unwrap_or_default()
+                                >= membership.f_plus_one()
+                            {
+                                OccPrepareResult::Ok
+                            } else {
+                                OccPrepareResult::Retry {
+                                    proposed: commit.time,
+                                }
+                            },
+                        )
+                    },
+                )
+                .await;
+
+            let CR::Prepare(result) = result else {
+                debug_assert!(false);
+                return;
+            };
+
+            match result {
+                OccPrepareResult::Ok => {
+                    client
+                        .invoke_inconsistent(IO::Commit {
+                            transaction_id,
+                            transaction,
+                            commit,
+                        })
+                        .await
+                }
+                OccPrepareResult::Fail => {
+                    client
+                        .invoke_inconsistent(IO::Abort {
+                            transaction_id,
+                            transaction,
+                            commit,
+                        })
+                        .await
+                }
+                _ => {}
+            }
+
+            eprintln!("BACKUP COORD got {result:?}");
         }
     }
 }
@@ -119,7 +217,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 .inner
                 .prepared
                 .get(transaction_id)
-                .map(|(c, _, _)| c == commit)
+                .map(|(c, _)| c == commit)
                 .unwrap_or(false)
             {
                 // Already prepared at this timestamp.
@@ -129,7 +227,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     .inner
                     .prepared
                     .get(transaction_id)
-                    .map(|(c, _, _)| c.time < self.min_prepare_time)
+                    .map(|(c, _)| c.time < self.min_prepare_time)
                     .unwrap_or(false)
             {
                 // Too late to prepare or reprepare.
@@ -253,7 +351,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     transaction_id,
                     transaction,
                     commit,
-                    backup
+                    backup,
                 } => {
                     ret.insert(
                         *op_id,
@@ -263,7 +361,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                                     .inner
                                     .prepared
                                     .get(transaction_id)
-                                    .map(|(c, _, _)| c.time < self.min_prepare_time)
+                                    .map(|(c, _)| c.time < self.min_prepare_time)
                                     .unwrap_or(false)
                             {
                                 OccPrepareResult::TooLate
@@ -319,7 +417,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                                 .inner
                                 .prepared
                                 .get(transaction_id)
-                                .map(|(c, _, _)| c.time < self.min_prepare_time)
+                                .map(|(c, _)| c.time < self.min_prepare_time)
                                 .unwrap_or(false)
                         {
                             OccPrepareResult::TooLate
@@ -346,5 +444,27 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
         }
 
         ret
+    }
+
+    fn tick<T: Transport<Message = IrMessage<Self>>>(
+        &mut self,
+        membership: &IrMembership<T>,
+        transport: &T,
+    ) {
+        let threshold: u64 = transport.time() - 5 * 1000 * 1000 * 1000;
+        for (transaction_id, (commit, transaction)) in &self.inner.prepared {
+            if commit.time > threshold {
+                // Allow the client to finish on its own.
+                break;
+            }
+            let future = Self::recover_coordination(
+                *transaction_id,
+                transaction.clone(),
+                *commit,
+                membership.clone(),
+                transport.clone(),
+            );
+            tokio::spawn(future);
+        }
     }
 }

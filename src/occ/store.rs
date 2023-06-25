@@ -24,7 +24,7 @@ pub struct Store<K, V, TS> {
     /// Transactions which may commit in the future (and whether they are undergoing
     /// coordinator recovery).
     #[serde(with = "vectorize")]
-    pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, bool)>,
+    pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>)>,
     // Cache.
     #[serde(with = "vectorize", bound(deserialize = "TS: Deserialize<'de> + Ord"))]
     prepared_reads: HashMap<K, TimestampSet<TS>>,
@@ -226,11 +226,12 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
             }
         }
 
-        if !dry_run {
+        if dry_run {
+            PrepareResult::Retry { proposed: commit.time() }
+        } else {
             self.add_prepared(id, transaction, commit);
+            PrepareResult::Ok
         }
-
-        PrepareResult::Ok
     }
 
     pub fn commit(&mut self, id: TransactionId, transaction: Transaction<K, V, TS>, commit: TS) {
@@ -274,10 +275,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
                 .insert(commit, ());
         }
 
-        if let Some((old_commit, transaction, _)) = self
-            .prepared
-            .insert(id, (commit, transaction, Default::default()))
-        {
+        if let Some((old_commit, transaction)) = self.prepared.insert(id, (commit, transaction)) {
             if old_commit != commit {
                 self.remove_prepared_inner(id, transaction, old_commit);
             }
@@ -285,7 +283,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
     }
 
     pub fn remove_prepared(&mut self, id: TransactionId) -> bool {
-        if let Some((commit, transaction, _)) = self.prepared.remove(&id) {
+        if let Some((commit, transaction)) = self.prepared.remove(&id) {
             self.remove_prepared_inner(id, transaction, commit);
             true
         } else {

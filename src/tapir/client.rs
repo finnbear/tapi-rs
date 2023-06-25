@@ -53,7 +53,8 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
         self.inner.put(key, value);
     }
 
-    pub fn commit(&self) -> impl Future<Output = Option<Timestamp>> {
+    #[doc(hidden)]
+    pub fn commit_inner(&self, inject_fault: bool) -> impl Future<Output = Option<Timestamp>> {
         let inner = self.inner.clone();
         let min_commit_timestamp = inner.max_read_timestamp().saturating_add(1);
         let mut timestamp = Timestamp {
@@ -78,7 +79,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
                 }
                 let ok = matches!(result, OccPrepareResult::Ok);
                 use rand::Rng;
-                if rand::thread_rng().gen_bool(0.1) {
+                if inject_fault {
                     // Induce a coordinator failure.
                     return None;
                 }
@@ -91,5 +92,9 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
                 return Some(timestamp).filter(|_| ok);
             }
         }
+    }
+
+    pub fn commit(&self) -> impl Future<Output = Option<Timestamp>> {
+        self.commit_inner(false)
     }
 }
