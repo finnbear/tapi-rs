@@ -91,6 +91,16 @@ pub enum PrepareResult<TS: Timestamp> {
     TooOld,
 }
 
+impl<TS: Timestamp> PrepareResult<TS> {
+    pub fn is_ok(&self) -> bool {
+        matches!(self, Self::Ok)
+    }
+
+    pub fn is_fail(&self) -> bool {
+        matches!(self, Self::Fail)
+    }
+}
+
 impl<K: Key, V: Value, TS> Store<K, V, TS> {
     pub fn new(linearizable: bool) -> Self {
         Self {
@@ -123,6 +133,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
         id: TransactionId,
         transaction: Transaction<K, V, TS>,
         commit: TS,
+        dry_run: bool,
     ) -> PrepareResult<TS> {
         if let Entry::Occupied(occupied) = self.prepared.entry(id) {
             if occupied.get().0 == commit {
@@ -215,7 +226,9 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
             }
         }
 
-        self.add_prepared(id, transaction, commit);
+        if !dry_run {
+            self.add_prepared(id, transaction, commit);
+        }
 
         PrepareResult::Ok
     }

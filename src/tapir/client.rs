@@ -77,6 +77,11 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
                     }
                 }
                 let ok = matches!(result, OccPrepareResult::Ok);
+                use rand::Rng;
+                if rand::thread_rng().gen_bool(0.1) {
+                    // Induce a coordinator failure.
+                    return None;
+                }
                 inner.end(timestamp, ok).await;
 
                 if ok && remaining_tries != 3 {

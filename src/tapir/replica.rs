@@ -97,6 +97,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transaction_id,
                 transaction,
                 commit,
+                backup,
             } => CR::Prepare(if commit.time < self.gc_watermark {
                 // In theory, could check the other conditions first, but
                 // that might hide bugs.
@@ -135,7 +136,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 OccPrepareResult::TooLate
             } else {
                 self.inner
-                    .prepare(*transaction_id, transaction.clone(), *commit)
+                    .prepare(*transaction_id, transaction.clone(), *commit, *backup)
             }),
             CO::RaiseMinPrepareTime { time } => {
                 self.min_prepare_time = self.min_prepare_time.max(*time);
@@ -163,10 +164,12 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     transaction_id,
                     transaction,
                     commit,
+                    backup,
                 } => {
                     if matches!(entry.result, CR::Prepare(OccPrepareResult::Ok)) {
                         if !self.inner.prepared.contains_key(transaction_id)
                             && !self.transaction_log.contains_key(transaction_id)
+                            && !*backup
                         {
                             // Enough other replicas agreed to prepare
                             // the transaction so it must be okay.
@@ -174,6 +177,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                                 .add_prepared(*transaction_id, transaction.clone(), *commit);
                         }
                     } else {
+                        // TODO: Is it safe for a backup coordinator to
+                        // trigger this code path?
                         self.inner.remove_prepared(*transaction_id);
                     }
                 }
@@ -223,6 +228,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
         u: Vec<(IrOpId, Self::CO, Self::CR)>,
     ) -> HashMap<IrOpId, Self::CR> {
         let mut ret: HashMap<IrOpId, Self::CR> = HashMap::new();
+
+        // Remove inconsistencies caused by out-of-order execution at the leader.
         for (op_id, request) in u
             .iter()
             .map(|(op_id, op, _)| (op_id, op))
@@ -246,6 +253,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     transaction_id,
                     transaction,
                     commit,
+                    backup
                 } => {
                     ret.insert(
                         *op_id,
@@ -262,8 +270,13 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                             } else if !self.transaction_log.contains_key(transaction_id)
                                 && matches!(reply, CR::Prepare(OccPrepareResult::Ok))
                             {
-                                self.inner
-                                    .prepare(*transaction_id, transaction.clone(), *commit)
+                                // Ensure the successful prepare is possible and, if so, durable.
+                                self.inner.prepare(
+                                    *transaction_id,
+                                    transaction.clone(),
+                                    *commit,
+                                    *backup,
+                                )
                             } else if let CR::Prepare(result) = reply {
                                 *result
                             } else {
@@ -295,6 +308,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     transaction_id,
                     transaction,
                     commit,
+                    backup,
                 } => {
                     ret.insert(
                         *op_id,
@@ -310,8 +324,12 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                         {
                             OccPrepareResult::TooLate
                         } else {
-                            self.inner
-                                .prepare(*transaction_id, transaction.clone(), *commit)
+                            self.inner.prepare(
+                                *transaction_id,
+                                transaction.clone(),
+                                *commit,
+                                *backup,
+                            )
                         }),
                     );
                 }

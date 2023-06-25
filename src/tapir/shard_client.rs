@@ -147,6 +147,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
                 transaction_id: lock.id,
                 transaction: lock.inner.clone(),
                 commit: timestamp,
+                backup: false,
             },
             |results, membership_size| {
                 let mut ok_count = 0;
