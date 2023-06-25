@@ -1,4 +1,4 @@
-use super::{CoordinatorViewNumber, Timestamp, Transaction, TransactionId};
+use super::{Timestamp, Transaction, TransactionId};
 use crate::{
     tapir::{Key, Value},
     util::{vectorize, vectorize_btree},
@@ -21,8 +21,10 @@ pub struct Store<K, V, TS> {
         deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>, TS: Deserialize<'de> + Ord"
     ))]
     inner: MvccStore<K, V, TS>,
+    /// Transactions which may commit in the future (and whether they are undergoing
+    /// coordinator recovery).
     #[serde(with = "vectorize")]
-    pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, CoordinatorViewNumber)>,
+    pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>)>,
     // Cache.
     #[serde(with = "vectorize", bound(deserialize = "TS: Deserialize<'de> + Ord"))]
     prepared_reads: HashMap<K, TimestampSet<TS>>,
@@ -76,8 +78,27 @@ pub enum PrepareResult<TS: Timestamp> {
     Abstain,
     /// There was a conflict with a committed transaction.
     Fail,
-    /// Used for coordinator recovery purposes.
-    NoVote,
+    /// It is too late to prepare with this commit timestamp.
+    TooLate,
+    /// The commit time is too old (would be or was already garbage collected).
+    ///
+    /// It isn't known whether such transactions were prepared, committed, or aborted.
+    /// - Clients can safely hang i.e. while polling more replicas, or return an
+    ///   indeterminate result.
+    /// - Backup coordinators can safely give up (transaction guaranteed to have
+    ///   committed or aborted already).
+    /// - Merging replicas can safely self-destruct (TODO: is there a better option?)
+    TooOld,
+}
+
+impl<TS: Timestamp> PrepareResult<TS> {
+    pub fn is_ok(&self) -> bool {
+        matches!(self, Self::Ok)
+    }
+
+    pub fn is_fail(&self) -> bool {
+        matches!(self, Self::Fail)
+    }
 }
 
 impl<K: Key, V: Value, TS> Store<K, V, TS> {
@@ -112,6 +133,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
         id: TransactionId,
         transaction: Transaction<K, V, TS>,
         commit: TS,
+        dry_run: bool,
     ) -> PrepareResult<TS> {
         if let Entry::Occupied(occupied) = self.prepared.entry(id) {
             if occupied.get().0 == commit {
@@ -204,9 +226,12 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
             }
         }
 
-        self.add_prepared(id, transaction, commit);
-
-        PrepareResult::Ok
+        if dry_run {
+            PrepareResult::Retry { proposed: commit.time() }
+        } else {
+            self.add_prepared(id, transaction, commit);
+            PrepareResult::Ok
+        }
     }
 
     pub fn commit(&mut self, id: TransactionId, transaction: Transaction<K, V, TS>, commit: TS) {
@@ -250,10 +275,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
                 .insert(commit, ());
         }
 
-        if let Some((old_commit, transaction, _)) = self
-            .prepared
-            .insert(id, (commit, transaction, Default::default()))
-        {
+        if let Some((old_commit, transaction)) = self.prepared.insert(id, (commit, transaction)) {
             if old_commit != commit {
                 self.remove_prepared_inner(id, transaction, old_commit);
             }
@@ -261,7 +283,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
     }
 
     pub fn remove_prepared(&mut self, id: TransactionId) -> bool {
-        if let Some((commit, transaction, _)) = self.prepared.remove(&id) {
+        if let Some((commit, transaction)) = self.prepared.remove(&id) {
             self.remove_prepared_inner(id, transaction, commit);
             true
         } else {

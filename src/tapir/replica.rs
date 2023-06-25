@@ -1,12 +1,15 @@
 use super::{Key, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::util::vectorize;
 use crate::{
-    IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult, OccStore, OccTransaction,
-    OccTransactionId,
+    IrClient, IrMembership, IrMessage, IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult,
+    OccStore, OccTransaction, OccTransactionId, Transport,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Debug, hash::Hash};
+use std::{collections::HashMap, fmt::Debug, future::Future, hash::Hash};
 
+/// Diverge from TAPIR and don't maintain a no-vote list. Instead, wait for a
+/// view change to syncronize each participant shard's prepare result and then
+/// let one or more of many possible backup coordinators take them at face-value.
 #[derive(Serialize, Deserialize)]
 pub struct Replica<K, V> {
     #[serde(bound(deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>"))]
@@ -21,17 +24,16 @@ pub struct Replica<K, V> {
         )
     )]
     transaction_log: HashMap<OccTransactionId, (Timestamp, OccTransaction<K, V, Timestamp>, bool)>,
-    /// Transactions that a backup coordinator may abort.
-    #[serde(with = "vectorize")]
-    no_vote_list: HashMap<OccTransactionId, Timestamp>,
     /// Extension to TAPIR: Garbage collection watermark time.
-    /// - All transactions before this are committed.
+    /// - All transactions before this are committed/aborted.
     /// - Must not prepare transactions before this.
     /// - May (at any time) garbage collect MVCC versions
     ///   that are invalid at and after this.
     /// - May (at any time) garbage collect keys with
     ///   a tombstone valid at and after this.
     gc_watermark: u64,
+    /// Minimum acceptable prepare time.
+    min_prepare_time: u64,
 }
 
 impl<K: Key, V: Value> Replica<K, V> {
@@ -39,8 +41,106 @@ impl<K: Key, V: Value> Replica<K, V> {
         Self {
             inner: OccStore::new(linearizable),
             transaction_log: HashMap::new(),
-            no_vote_list: HashMap::new(),
             gc_watermark: 0,
+            min_prepare_time: 0,
+        }
+    }
+
+    fn recover_coordination<T: Transport<Message = IrMessage<Self>>>(
+        transaction_id: OccTransactionId,
+        transaction: OccTransaction<K, V, Timestamp>,
+        commit: Timestamp,
+        membership: IrMembership<T>,
+        transport: T,
+    ) -> impl Future<Output = ()> {
+        let client = IrClient::<Self, T>::new(membership, transport);
+        async move {
+            client
+                .invoke_consensus(
+                    CO::RaiseMinPrepareTime {
+                        time: commit.time + 1,
+                    },
+                    |results, size| CR::RaiseMinPrepareTime {
+                        time: results
+                            .keys()
+                            .filter_map(|r| {
+                                if let CR::RaiseMinPrepareTime { time } = r {
+                                    Some(*time)
+                                } else {
+                                    debug_assert!(false);
+                                    None
+                                }
+                            })
+                            .max()
+                            .unwrap_or_default(),
+                    },
+                )
+                .await;
+
+            let result = client
+                .invoke_consensus(
+                    CO::Prepare {
+                        transaction_id,
+                        transaction: transaction.clone(),
+                        commit,
+                        backup: true,
+                    },
+                    |results, membership| {
+                        CR::Prepare(
+                            if results.contains_key(&CR::Prepare(OccPrepareResult::Fail)) {
+                                OccPrepareResult::Fail
+                            } else if results
+                                .get(&CR::Prepare(OccPrepareResult::TooLate))
+                                .copied()
+                                .unwrap_or_default()
+                                >= membership.f_plus_one()
+                            {
+                                OccPrepareResult::Fail
+                            } else if results
+                                .get(&CR::Prepare(OccPrepareResult::Ok))
+                                .copied()
+                                .unwrap_or_default()
+                                >= membership.f_plus_one()
+                            {
+                                OccPrepareResult::Ok
+                            } else {
+                                OccPrepareResult::Retry {
+                                    proposed: commit.time,
+                                }
+                            },
+                        )
+                    },
+                )
+                .await;
+
+            let CR::Prepare(result) = result else {
+                debug_assert!(false);
+                return;
+            };
+
+            match result {
+                OccPrepareResult::Ok => {
+                    client
+                        .invoke_inconsistent(IO::Commit {
+                            transaction_id,
+                            transaction,
+                            commit,
+                        })
+                        .await
+                }
+                OccPrepareResult::Fail => {
+                    client
+                        .invoke_inconsistent(IO::Abort {
+                            transaction_id,
+                            transaction,
+                            commit,
+                        })
+                        .await
+                }
+                _ => {}
+            }
+
+            eprintln!("BACKUP COORD got {result:?}");
         }
     }
 }
@@ -95,18 +195,53 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transaction_id,
                 transaction,
                 commit,
-            } => CR::Prepare(
-                if let Some((_, _, commit)) = self.transaction_log.get(transaction_id) {
-                    if *commit {
+                backup,
+            } => CR::Prepare(if commit.time < self.gc_watermark {
+                // In theory, could check the other conditions first, but
+                // that might hide bugs.
+                OccPrepareResult::TooOld
+            } else if let Some((ts, _, committed)) = self.transaction_log.get(transaction_id) {
+                if *committed {
+                    if commit == ts {
+                        // Already committed at this timestamp.
                         OccPrepareResult::Ok
                     } else {
-                        OccPrepareResult::Fail
+                        // Committed at a different timestamp.
+                        OccPrepareResult::Retry { proposed: ts.time }
                     }
                 } else {
-                    self.inner
-                        .prepare(*transaction_id, transaction.clone(), *commit)
-                },
-            ),
+                    // Already aborted or committed at a different timestamp.
+                    OccPrepareResult::Fail
+                }
+            } else if self
+                .inner
+                .prepared
+                .get(transaction_id)
+                .map(|(c, _)| c == commit)
+                .unwrap_or(false)
+            {
+                // Already prepared at this timestamp.
+                OccPrepareResult::Ok
+            } else if commit.time < self.min_prepare_time
+                || self
+                    .inner
+                    .prepared
+                    .get(transaction_id)
+                    .map(|(c, _)| c.time < self.min_prepare_time)
+                    .unwrap_or(false)
+            {
+                // Too late to prepare or reprepare.
+                OccPrepareResult::TooLate
+            } else {
+                self.inner
+                    .prepare(*transaction_id, transaction.clone(), *commit, *backup)
+            }),
+            CO::RaiseMinPrepareTime { time } => {
+                self.min_prepare_time = self.min_prepare_time.max(*time);
+                CR::RaiseMinPrepareTime {
+                    time: self.min_prepare_time,
+                }
+            }
         }
     }
 
@@ -127,19 +262,29 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     transaction_id,
                     transaction,
                     commit,
+                    backup,
                 } => {
                     if matches!(entry.result, CR::Prepare(OccPrepareResult::Ok)) {
                         if !self.inner.prepared.contains_key(transaction_id)
                             && !self.transaction_log.contains_key(transaction_id)
+                            && !*backup
                         {
+                            // Enough other replicas agreed to prepare
+                            // the transaction so it must be okay.
                             self.inner
                                 .add_prepared(*transaction_id, transaction.clone(), *commit);
                         }
-                    } else if self.inner.remove_prepared(*transaction_id)
-                        && matches!(entry.result, CR::Prepare(OccPrepareResult::NoVote))
-                        && !self.transaction_log.contains_key(&transaction_id)
-                    {
-                        self.no_vote_list.insert(*transaction_id, *commit);
+                    } else {
+                        // TODO: Is it safe for a backup coordinator to
+                        // trigger this code path?
+                        self.inner.remove_prepared(*transaction_id);
+                    }
+                }
+                CO::RaiseMinPrepareTime { .. } => {
+                    if let CR::RaiseMinPrepareTime { time } = &entry.result {
+                        self.min_prepare_time = self.min_prepare_time.max(*time);
+                    } else {
+                        debug_assert!(false);
                     }
                 }
             }
@@ -181,6 +326,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
         u: Vec<(IrOpId, Self::CO, Self::CR)>,
     ) -> HashMap<IrOpId, Self::CR> {
         let mut ret: HashMap<IrOpId, Self::CR> = HashMap::new();
+
+        // Remove inconsistencies caused by out-of-order execution at the leader.
         for (op_id, request) in u
             .iter()
             .map(|(op_id, op, _)| (op_id, op))
@@ -193,8 +340,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     ..
                 } => {
                     self.inner.remove_prepared(*transaction_id);
-                    self.no_vote_list.remove(transaction_id);
                 }
+                CO::RaiseMinPrepareTime { .. } => {}
             }
         }
 
@@ -204,20 +351,50 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     transaction_id,
                     transaction,
                     commit,
+                    backup,
                 } => {
-                    let reply = ret.insert(
+                    ret.insert(
                         *op_id,
-                        CR::Prepare(if self.no_vote_list.contains_key(transaction_id) {
-                            OccPrepareResult::NoVote
-                        } else if !self.transaction_log.contains_key(transaction_id)
-                            && matches!(reply, CR::Prepare(OccPrepareResult::Ok))
-                        {
-                            self.inner
-                                .prepare(*transaction_id, transaction.clone(), *commit)
-                        } else {
-                            let CR::Prepare(result) = reply;
-                            *result
-                        }),
+                        CR::Prepare(
+                            if commit.time < self.min_prepare_time
+                                || self
+                                    .inner
+                                    .prepared
+                                    .get(transaction_id)
+                                    .map(|(c, _)| c.time < self.min_prepare_time)
+                                    .unwrap_or(false)
+                            {
+                                OccPrepareResult::TooLate
+                            } else if !self.transaction_log.contains_key(transaction_id)
+                                && matches!(reply, CR::Prepare(OccPrepareResult::Ok))
+                            {
+                                // Ensure the successful prepare is possible and, if so, durable.
+                                self.inner.prepare(
+                                    *transaction_id,
+                                    transaction.clone(),
+                                    *commit,
+                                    *backup,
+                                )
+                            } else if let CR::Prepare(result) = reply {
+                                *result
+                            } else {
+                                debug_assert!(false);
+                                OccPrepareResult::Abstain
+                            },
+                        ),
+                    );
+                }
+                CO::RaiseMinPrepareTime { time } => {
+                    ret.insert(
+                        *op_id,
+                        CR::RaiseMinPrepareTime {
+                            time: if let CR::RaiseMinPrepareTime { time } = reply {
+                                *time
+                            } else {
+                                debug_assert!(false);
+                                *time
+                            },
+                        },
                     );
                 }
             }
@@ -229,20 +406,65 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     transaction_id,
                     transaction,
                     commit,
+                    backup,
                 } => {
                     ret.insert(
                         *op_id,
-                        CR::Prepare(if self.no_vote_list.contains_key(transaction_id) {
-                            OccPrepareResult::NoVote
+                        CR::Prepare(if commit.time < self.gc_watermark {
+                            OccPrepareResult::TooOld
+                        } else if commit.time < self.min_prepare_time
+                            || self
+                                .inner
+                                .prepared
+                                .get(transaction_id)
+                                .map(|(c, _)| c.time < self.min_prepare_time)
+                                .unwrap_or(false)
+                        {
+                            OccPrepareResult::TooLate
                         } else {
-                            self.inner
-                                .prepare(*transaction_id, transaction.clone(), *commit)
+                            self.inner.prepare(
+                                *transaction_id,
+                                transaction.clone(),
+                                *commit,
+                                *backup,
+                            )
                         }),
+                    );
+                }
+                CO::RaiseMinPrepareTime { time } => {
+                    self.min_prepare_time = self.min_prepare_time.max(*time);
+                    ret.insert(
+                        *op_id,
+                        CR::RaiseMinPrepareTime {
+                            time: self.min_prepare_time,
+                        },
                     );
                 }
             }
         }
 
         ret
+    }
+
+    fn tick<T: Transport<Message = IrMessage<Self>>>(
+        &mut self,
+        membership: &IrMembership<T>,
+        transport: &T,
+    ) {
+        let threshold: u64 = transport.time() - 5 * 1000 * 1000 * 1000;
+        for (transaction_id, (commit, transaction)) in &self.inner.prepared {
+            if commit.time > threshold {
+                // Allow the client to finish on its own.
+                break;
+            }
+            let future = Self::recover_coordination(
+                *transaction_id,
+                transaction.clone(),
+                *commit,
+                membership.clone(),
+                transport.clone(),
+            );
+            tokio::spawn(future);
+        }
     }
 }

@@ -147,6 +147,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
                 transaction_id: lock.id,
                 transaction: lock.inner.clone(),
                 commit: timestamp,
+                backup: false,
             },
             |results, membership_size| {
                 let mut ok_count = 0;
@@ -154,7 +155,10 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
                 let mut timestamp = 0u64;
 
                 for (reply, count) in results {
-                    let CR::Prepare(reply) = reply;
+                    let CR::Prepare(reply) = reply else {
+                        debug_assert!(false);
+                        continue;
+                    };
 
                     match reply {
                         OccPrepareResult::Ok => {
@@ -169,7 +173,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
                         OccPrepareResult::Fail => {
                             return CR::Prepare(OccPrepareResult::Fail);
                         }
-                        OccPrepareResult::NoVote => unimplemented!(),
+                        OccPrepareResult::TooLate | OccPrepareResult::TooOld => unimplemented!(),
                     }
                 }
 
@@ -190,8 +194,12 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
 
         async move {
             let reply = future.await;
-            let CR::Prepare(result) = reply;
-            result
+            if let CR::Prepare(result) = reply {
+                result
+            } else {
+                debug_assert!(false);
+                OccPrepareResult::Fail
+            }
         }
     }
 

@@ -50,10 +50,17 @@ pub enum CO<K, V> {
         transaction: OccTransaction<K, V, Timestamp>,
         /// Proposed commit timestamp.
         commit: Timestamp,
+        /// `true` when sent by backup coordinator(s), in which case the prepare
+        /// action is skipped.
+        backup: bool,
+    },
+    RaiseMinPrepareTime {
+        time: u64,
     },
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum CR {
     Prepare(OccPrepareResult<Timestamp>),
+    RaiseMinPrepareTime { time: u64 },
 }

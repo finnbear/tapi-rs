@@ -64,6 +64,13 @@ pub trait Upcalls: Sized + Send + Serialize + DeserializeOwned + 'static {
         d: HashMap<OpId, (Self::CO, Self::CR)>,
         u: Vec<(OpId, Self::CO, Self::CR)>,
     ) -> HashMap<OpId, Self::CR>;
+    fn tick<T: Transport<Message = Message<Self>>>(
+        &mut self,
+        membership: &Membership<T>,
+        transport: &T,
+    ) {
+        // No-op.
+    }
 }
 
 pub struct Replica<U: Upcalls, T: Transport<Message = Message<U>>> {
@@ -152,6 +159,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
         }
         drop(sync);
         ret.tick();
+        ret.tick_app();
         ret
     }
 
@@ -198,6 +206,23 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
 
                     Self::broadcast_do_view_change(my_index, &inner.transport, &mut *sync);
                 }
+            }
+        });
+    }
+
+    fn tick_app(&self) {
+        let inner = Arc::downgrade(&self.inner);
+        let transport = self.inner.transport.clone();
+        tokio::spawn(async move {
+            loop {
+                T::sleep(Duration::from_secs(1)).await;
+
+                let Some(inner) = inner.upgrade() else {
+                    break;
+                };
+                let mut sync = inner.sync.lock().unwrap();
+                let sync = &mut *sync;
+                sync.upcalls.tick(&sync.view.membership, &transport);
             }
         });
     }
