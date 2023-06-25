@@ -11,7 +11,7 @@ use std::{
 };
 
 pub trait Transport: Clone + Send + Sync + 'static {
-    type Address: Copy + Debug + Send + 'static;
+    type Address: Copy + Eq + Debug + Send + 'static;
     type Sleep: Future<Output = ()> + Send;
     type Message: Message;
 

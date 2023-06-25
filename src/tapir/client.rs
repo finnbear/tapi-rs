@@ -9,6 +9,10 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime},
 };
+use tokio::{
+    select,
+    time::{timeout, Sleep, Timeout},
+};
 
 pub struct Client<K: Key, V: Value, T: Transport> {
     /// TODO: Add multiple shards.
@@ -53,8 +57,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
         self.inner.put(key, value);
     }
 
-    #[doc(hidden)]
-    pub fn commit_inner(&self, inject_fault: bool) -> impl Future<Output = Option<Timestamp>> {
+    pub fn commit(&self) -> impl Future<Output = Option<Timestamp>> {
         let inner = self.inner.clone();
         let min_commit_timestamp = inner.max_read_timestamp().saturating_add(1);
         let mut timestamp = Timestamp {
@@ -81,9 +84,6 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
                     continue;
                 }
                 let ok = matches!(result, OccPrepareResult::Ok);
-                if inject_fault {
-                    T::sleep(Duration::from_secs(u64::MAX / 4)).await;
-                }
                 inner.end(timestamp, ok).await;
 
                 if ok && remaining_tries != 3 {
@@ -95,8 +95,28 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
         }
     }
 
-    pub fn commit(&self) -> impl Future<Output = Option<Timestamp>> {
-        use rand::Rng;
-        self.commit_inner(rand::thread_rng().gen_bool(0.02))
+    #[doc(hidden)]
+    pub fn commit2(
+        &self,
+        inject_fault: Option<Duration>,
+    ) -> impl Future<Output = Option<Timestamp>> {
+        let inner = self.commit();
+
+        async move {
+            if let Some(duration) = inject_fault {
+                let sleep = T::sleep(duration);
+                select! {
+                    _ = sleep => {
+                        std::future::pending::<()>().await;
+                        unreachable!();
+                    }
+                    result = inner => {
+                        return result;
+                    }
+                }
+            } else {
+                inner.await
+            }
+        }
     }
 }

@@ -20,8 +20,8 @@ Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-
   - [x] Optional linearizability
   - [x] IR sync & merge
   - [x] Prepare retries
+  - [x] Coordinator recovery
   - [ ] Sharding
-  - [ ] Cooperative termination
   - [ ] Persistent storage (e.g. `sled`)
   - [ ] Pessimistic read only transactions
 - [ ] Planned extensions

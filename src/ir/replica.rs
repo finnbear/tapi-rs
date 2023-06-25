@@ -105,6 +105,8 @@ struct Sync<U: Upcalls, T: Transport<Message = Message<U>>> {
     upcalls: U,
     record: Record<U>,
     outstanding_do_view_changes: HashMap<Index, DoViewChange<U::IO, U::CO, U::CR>>,
+    /// Last time received message from each peer replica.
+    peer_liveness: HashMap<Index, Instant>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -132,6 +134,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                     upcalls,
                     record: Record::<U>::default(),
                     outstanding_do_view_changes: HashMap::new(),
+                    peer_liveness: HashMap::new(),
                 }),
             }),
         };
@@ -193,6 +196,15 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                 let mut sync = inner.sync.lock().unwrap();
                 if sync.changed_view_recently {
                     sync.changed_view_recently = false;
+                } else if sync
+                    .peer_liveness
+                    .get(&Index(
+                        ((sync.view.number.0 + 1) % sync.view.membership.len() as u64) as usize,
+                    ))
+                    .map(|t| t.elapsed() > Duration::from_secs(3))
+                    .unwrap_or(false)
+                {
+                    // skip this view change.
                 } else {
                     if sync.status.is_normal() {
                         sync.status = Status::ViewChanging;
@@ -248,9 +260,15 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
     }
 
     pub fn receive(&self, address: T::Address, message: Message<U>) -> Option<Message<U>> {
+        let mut sync = self.inner.sync.lock().unwrap();
+        let sync = &mut *sync;
+
+        if let Some(index) = sync.view.membership.get_index(address) {
+            sync.peer_liveness.insert(index, Instant::now());
+        }
+
         match message {
             Message::<U>::RequestUnlogged(RequestUnlogged { op }) => {
-                let mut sync = self.inner.sync.lock().unwrap();
                 if sync.status.is_normal() {
                     let result = sync.upcalls.exec_unlogged(op);
                     return Some(Message::<U>::ReplyUnlogged(ReplyUnlogged {
@@ -260,9 +278,6 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                 }
             }
             Message::<U>::ProposeInconsistent(ProposeInconsistent { op_id, op, recent }) => {
-                let mut sync = self.inner.sync.lock().unwrap();
-                let sync = &mut *sync;
-                let sync = &mut *sync;
                 if sync.status.is_normal() {
                     if !recent.is_recent_relative_to(sync.view.number) {
                         eprintln!("ancient relative to {:?}", sync.view.number);
@@ -289,8 +304,6 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                 }
             }
             Message::<U>::ProposeConsensus(ProposeConsensus { op_id, op, recent }) => {
-                let mut sync = self.inner.sync.lock().unwrap();
-                let sync = &mut *sync;
                 if sync.status.is_normal() {
                     if !recent.is_recent_relative_to(sync.view.number) {
                         eprintln!("ancient relative to {:?}", sync.view.number);
@@ -325,16 +338,12 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                 }
             }
             Message::<U>::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
-                let mut sync = self.inner.sync.lock().unwrap();
-                let sync = &mut *sync;
                 if sync.status.is_normal() && let Some(entry) = sync.record.inconsistent.get_mut(&op_id) && entry.state.is_tentative() {
                     entry.state = RecordEntryState::Finalized(sync.view.number);
                     sync.upcalls.exec_inconsistent(&entry.op);
                 }
             }
             Message::<U>::FinalizeConsensus(FinalizeConsensus { op_id, result }) => {
-                let mut sync = self.inner.sync.lock().unwrap();
-                let sync = &mut *sync;
                 if sync.status.is_normal() {
                     if let Some(entry) = sync.record.consensus.get_mut(&op_id) {
                         // Don't allow a late `FinalizeConsensus` to overwrite
@@ -354,7 +363,6 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                 }
             }
             Message::<U>::DoViewChange(msg) => {
-                let mut sync = self.inner.sync.lock().unwrap();
                 if msg.view_number > sync.view.number
                     || (msg.view_number == sync.view.number && sync.status.is_view_changing())
                 {
@@ -552,8 +560,6 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                 record: new_record,
                 view_number,
             }) => {
-                let mut sync = self.inner.sync.lock().unwrap();
-                let sync = &mut *sync;
                 if view_number > sync.view.number
                     || (view_number == sync.view.number || !sync.status.is_normal())
                 {

@@ -137,7 +137,7 @@ impl<M: Message> Transport for Channel<M> {
         message: impl Into<Self::Message> + Debug,
     ) -> impl Future<Output = R> + 'static {
         let from: usize = self.address;
-        // println!("{from} sending {message:?} to {address}");
+        //println!("{from} sending {message:?} to {address}");
         let message = message.into();
         let inner = Arc::clone(&self.inner);
         async move {
@@ -171,7 +171,7 @@ impl<M: Message> Transport for Channel<M> {
     fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + Debug) {
         let from = self.address;
         let should_drop = Self::should_drop(self.address, address);
-        // println!("{from} do-sending {message:?} to {address} (drop = {should_drop})");
+        //println!("{from} do-sending {message:?} to {address} (drop = {should_drop})");
         let message = message.into();
         let inner = self.inner.read().unwrap();
         let callback = inner.callbacks.get(address).map(Arc::clone);

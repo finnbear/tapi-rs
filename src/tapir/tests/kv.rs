@@ -4,7 +4,7 @@ use rand::{thread_rng, Rng};
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
     IrMessage, IrOpId, IrRecord, IrRecordConsensusEntry, IrReplica, IrReplicaIndex,
-    IrReplicaUpcalls, TapirClient, TapirReplica, Transport as _,
+    IrReplicaUpcalls, TapirClient, TapirReplica, TapirTimestamp, Transport as _,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -12,7 +12,7 @@ use std::{
     hash::Hash,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -260,25 +260,40 @@ async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize)
 
 #[tokio::test]
 async fn coordinator_recovery() {
-    let (replicas, clients) = build_kv(true, 3, 2);
+    'outer: for n in (0..80).chain((80..500).step_by(10)) {
+        let (replicas, clients) = build_kv(true, 3, 2);
 
-    let txn = clients[0].begin();
-    txn.put(0, Some(42));
-    txn.commit_inner(true).await;
+        let txn = clients[0].begin();
+        txn.put(0, Some(42));
+        let result = Arc::new(Mutex::new(Option::<Option<TapirTimestamp>>::None));
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    for i in 0..100 {
-        let txn = clients[1].begin();
-        let read = txn.get(0).await;
-        println!("try {i} read {read:?}");
-        let committed = txn.commit().await.is_some();
-        if committed {
-            return;
+        {
+            let result = Arc::clone(&result);
+            tokio::spawn(async move {
+                let ts = txn.commit2(Some(Duration::from_millis(n))).await;
+                *result.lock().unwrap() = Some(ts);
+            });
         }
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+        //tokio::time::sleep(Duration::from_secs(1)).await;
 
-    panic!("never recovered");
+        for i in 0..100 {
+            let txn = clients[1].begin();
+            let read = txn.get(0).await;
+            println!("{n} try {i} read {read:?}");
+            if let Some(ts) = txn.commit().await {
+                let result = result.lock().unwrap();
+                if let Some(result) = *result {
+                    if let Some(result) = result {
+                        assert_eq!(read.is_some(), ts > result);
+                    }
+                }
+                continue 'outer;
+            }
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        panic!("never recovered");
+    }
 }

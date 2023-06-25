@@ -53,6 +53,7 @@ impl<K: Key, V: Value> Replica<K, V> {
         membership: IrMembership<T>,
         transport: T,
     ) -> impl Future<Output = ()> {
+        println!("trying to recover {transaction_id:?}");
         let client = IrClient::<Self, T>::new(membership, transport);
         async move {
             client
@@ -86,6 +87,7 @@ impl<K: Key, V: Value> Replica<K, V> {
                         backup: true,
                     },
                     |results, membership| {
+                        println!("backup coordinator deciding on {results:?}");
                         CR::Prepare(
                             if results.contains_key(&CR::Prepare(OccPrepareResult::Fail)) {
                                 OccPrepareResult::Fail
@@ -140,7 +142,7 @@ impl<K: Key, V: Value> Replica<K, V> {
                 _ => {}
             }
 
-            eprintln!("BACKUP COORD got {result:?}");
+            eprintln!("BACKUP COORD got {result:?} for {commit:?}");
         }
     }
 }
@@ -172,8 +174,12 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transaction,
                 commit,
             } => {
-                self.transaction_log
+                let old = self
+                    .transaction_log
                     .insert(*transaction_id, (*commit, transaction.clone(), true));
+                if let Some((_, _, was_committed)) = old {
+                    debug_assert!(was_committed);
+                }
                 self.inner
                     .commit(*transaction_id, transaction.clone(), *commit);
             }
@@ -182,8 +188,12 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transaction,
                 commit,
             } => {
-                self.transaction_log
+                let old = self
+                    .transaction_log
                     .insert(*transaction_id, (*commit, transaction.clone(), false));
+                if let Some((_, _, was_committed)) = old {
+                    debug_assert!(!was_committed);
+                }
                 self.inner.abort(*transaction_id);
             }
         }
@@ -303,8 +313,12 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 } => {
                     self.inner
                         .commit(*transaction_id, transaction.clone(), *commit);
-                    self.transaction_log
+                    let old = self
+                        .transaction_log
                         .insert(*transaction_id, (*commit, transaction.clone(), true));
+                    if let Some((_, _, was_committed)) = old {
+                        debug_assert!(was_committed);
+                    }
                 }
                 IO::Abort {
                     transaction_id,
@@ -312,8 +326,12 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     commit,
                 } => {
                     self.inner.abort(*transaction_id);
-                    self.transaction_log
+                    let old = self
+                        .transaction_log
                         .insert(*transaction_id, (*commit, transaction.clone(), false));
+                    if let Some((_, _, was_committed)) = old {
+                        debug_assert!(!was_committed);
+                    }
                 }
                 _ => unreachable!(),
             }

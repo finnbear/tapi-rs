@@ -231,6 +231,16 @@ impl Process<LinKv, Wrapper> for KvNode {
     }
 
     async fn run(&self) -> Status {
+        fn commit_fault() -> Option<Duration> {
+            use rand::Rng;
+            let mut rng = rand::thread_rng();
+            if rng.gen_bool(0.02) {
+                Some(Duration::from_millis(rng.gen_range(0..100)))
+            } else {
+                None
+            }
+        }
+
         let (transport, inner) = self.inner.as_ref().unwrap();
         loop {
             eprintln!("RECEIVING");
@@ -301,7 +311,7 @@ impl Process<LinKv, Wrapper> for KvNode {
                                                 txn.put(key, Some(to));
                                             }
 
-                                            if txn.commit().await.is_some() {
+                                            if txn.commit2(commit_fault()).await.is_some() {
                                                 if old.is_none() {
                                                     let _ = transport
                                                         .inner
@@ -376,7 +386,7 @@ impl Process<LinKv, Wrapper> for KvNode {
                                                 serde_json::from_str::<serde_json::Value>(&s)
                                                     .unwrap()
                                             });
-                                            if txn.commit().await.is_some() {
+                                            if txn.commit2(commit_fault()).await.is_some() {
                                                 if let Some(old) = old {
                                                     let _ = transport
                                                         .inner
@@ -431,7 +441,7 @@ impl Process<LinKv, Wrapper> for KvNode {
                                             let key = serde_json::to_string(&key).unwrap();
                                             let value = serde_json::to_string(&value).unwrap();
                                             txn.put(key, Some(value));
-                                            if txn.commit().await.is_some() {
+                                            if txn.commit2(commit_fault()).await.is_some() {
                                                 let _ = transport
                                                     .inner
                                                     .net

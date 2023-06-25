@@ -227,7 +227,9 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
         }
 
         if dry_run {
-            PrepareResult::Retry { proposed: commit.time() }
+            PrepareResult::Retry {
+                proposed: commit.time(),
+            }
         } else {
             self.add_prepared(id, transaction, commit);
             PrepareResult::Ok

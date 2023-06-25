@@ -40,6 +40,13 @@ impl<T: Transport> Membership<T> {
         self.members.len()
     }
 
+    pub fn get_index(&self, address: T::Address) -> Option<ReplicaIndex> {
+        self.members
+            .iter()
+            .position(|a| *a == address)
+            .map(ReplicaIndex)
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn iter(
         &self,
