@@ -27,6 +27,11 @@ pub trait Transport: Clone + Send + Sync + 'static {
             .as_nanos() as u64
     }
 
+    fn time_offset(&self, offset: i64) -> u64 {
+        self.time()
+            .saturating_add_signed(offset.saturating_mul(1000 * 1000))
+    }
+
     /// Sleep for duration.
     fn sleep(duration: Duration) -> Self::Sleep;
 

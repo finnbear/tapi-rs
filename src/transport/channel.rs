@@ -93,12 +93,16 @@ impl<M: Message> Transport for Channel<M> {
     }
 
     fn time(&self) -> u64 {
+        self.time_offset(rand::thread_rng().gen_range(0..100))
+    }
+
+    fn time_offset(&self, offset: i64) -> u64 {
         use rand::Rng;
-        SystemTime::now()
+        (SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
-            .as_nanos() as u64
-            + rand::thread_rng().gen_range(0..10 * 1000 * 1000)
+            .as_nanos() as u64)
+            .saturating_add_signed(offset.saturating_mul(1000 * 1000 / 10))
     }
 
     fn sleep(duration: Duration) -> Self::Sleep {
