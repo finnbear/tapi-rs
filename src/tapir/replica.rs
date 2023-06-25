@@ -451,7 +451,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
         membership: &IrMembership<T>,
         transport: &T,
     ) {
-        let threshold: u64 = transport.time() - 5 * 1000 * 1000 * 1000;
+        let threshold: u64 = transport.time() - 10 * 1000 * 1000;
         for (transaction_id, (commit, transaction)) in &self.inner.prepared {
             if commit.time > threshold {
                 // Allow the client to finish on its own.

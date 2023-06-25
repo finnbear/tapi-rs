@@ -7,7 +7,7 @@ use std::{
     future::Future,
     hash::Hash,
     sync::atomic::{AtomicU64, Ordering},
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 pub struct Client<K: Key, V: Value, T: Transport> {
@@ -77,11 +77,12 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
                         continue;
                     }
                 }
+                if matches!(result, OccPrepareResult::TooLate | OccPrepareResult::TooOld) {
+                    continue;
+                }
                 let ok = matches!(result, OccPrepareResult::Ok);
-                use rand::Rng;
                 if inject_fault {
-                    // Induce a coordinator failure.
-                    return None;
+                    T::sleep(Duration::from_secs(u64::MAX / 4)).await;
                 }
                 inner.end(timestamp, ok).await;
 
@@ -95,6 +96,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
     }
 
     pub fn commit(&self) -> impl Future<Output = Option<Timestamp>> {
-        self.commit_inner(false)
+        use rand::Rng;
+        self.commit_inner(rand::thread_rng().gen_bool(0.02))
     }
 }

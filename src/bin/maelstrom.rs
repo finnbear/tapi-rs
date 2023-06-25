@@ -454,7 +454,9 @@ impl Process<LinKv, Wrapper> for KvNode {
                                                         dest: src,
                                                         body: Body::Error(Error {
                                                             in_reply_to: msg_id,
-                                                            text: String::from("read txn conflict"),
+                                                            text: String::from(
+                                                                "write txn conflict",
+                                                            ),
                                                             code: 30,
                                                         }),
                                                     })

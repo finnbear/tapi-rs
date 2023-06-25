@@ -173,7 +173,12 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
                         OccPrepareResult::Fail => {
                             return CR::Prepare(OccPrepareResult::Fail);
                         }
-                        OccPrepareResult::TooLate | OccPrepareResult::TooOld => unimplemented!(),
+                        OccPrepareResult::TooLate => {
+                            return CR::Prepare(OccPrepareResult::TooLate);
+                        }
+                        OccPrepareResult::TooOld => {
+                            return CR::Prepare(OccPrepareResult::TooOld);
+                        }
                     }
                 }
 
