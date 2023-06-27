@@ -32,12 +32,7 @@ pub struct Id(pub u64);
 impl Id {
     fn new() -> Self {
         let mut rng = thread_rng();
-        Self(if cfg!(debug_assertions) {
-            static ID: AtomicU64 = AtomicU64::new(0);
-            ID.fetch_add(1, Ordering::Relaxed)
-        } else {
-            rng.gen()
-        })
+        Self(rng.gen())
     }
 }
 

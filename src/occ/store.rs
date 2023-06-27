@@ -249,11 +249,6 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
         self.remove_prepared(id);
     }
 
-    pub fn abort(&mut self, id: TransactionId) {
-        // Note: Transaction may not be in the prepared list of this particular replica, and that's okay.
-        self.remove_prepared(id);
-    }
-
     pub fn put(&mut self, key: K, value: Option<V>, timestamp: TS) {
         self.inner.put(key, value, timestamp);
     }

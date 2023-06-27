@@ -57,7 +57,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
         self.inner.put(key, value);
     }
 
-    pub fn commit(&self) -> impl Future<Output = Option<Timestamp>> {
+    fn commit_inner(&self, only_prepare: bool) -> impl Future<Output = Option<Timestamp>> {
         let inner = self.inner.clone();
         let min_commit_timestamp = inner.max_read_timestamp().saturating_add(1);
         let mut timestamp = Timestamp {
@@ -84,7 +84,9 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
                     continue;
                 }
                 let ok = matches!(result, OccPrepareResult::Ok);
-                inner.end(timestamp, ok).await;
+                if !only_prepare {
+                    inner.end(timestamp, ok).await;
+                }
 
                 if ok && remaining_tries != 3 {
                     eprintln!("Retry actually worked!");
@@ -96,8 +98,17 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
     }
 
     #[doc(hidden)]
+    pub fn only_prepare(self) -> impl Future<Output = Option<Timestamp>> {
+        self.commit_inner(true)
+    }
+
+    pub fn commit(self) -> impl Future<Output = Option<Timestamp>> {
+        self.commit_inner(false)
+    }
+
+    #[doc(hidden)]
     pub fn commit2(
-        &self,
+        self,
         inject_fault: Option<Duration>,
     ) -> impl Future<Output = Option<Timestamp>> {
         let inner = self.commit();

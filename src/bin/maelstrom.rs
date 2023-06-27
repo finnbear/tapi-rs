@@ -286,7 +286,7 @@ impl Process<LinKv, Wrapper> for KvNode {
                                             eprintln!("NO RESPONSE");
                                         }
                                     } else {
-                                        unreachable!();
+                                        eprintln!("(was unsolicited)");
                                     };
                                 }
                             }

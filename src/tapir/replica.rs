@@ -23,7 +23,7 @@ pub struct Replica<K, V> {
             deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>"
         )
     )]
-    transaction_log: HashMap<OccTransactionId, (Timestamp, OccTransaction<K, V, Timestamp>, bool)>,
+    transaction_log: HashMap<OccTransactionId, Timestamp>,
     /// Extension to TAPIR: Garbage collection watermark time.
     /// - All transactions before this are committed/aborted.
     /// - Must not prepare transactions before this.
@@ -53,7 +53,7 @@ impl<K: Key, V: Value> Replica<K, V> {
         membership: IrMembership<T>,
         transport: T,
     ) -> impl Future<Output = ()> {
-        println!("trying to recover {transaction_id:?}");
+        eprintln!("trying to recover {transaction_id:?}");
         let client = IrClient::<Self, T>::new(membership, transport);
         async move {
             client
@@ -87,7 +87,9 @@ impl<K: Key, V: Value> Replica<K, V> {
                         backup: true,
                     },
                     |results, membership| {
-                        println!("backup coordinator deciding on {results:?}");
+                        println!(
+                            "backup coordinator deciding on {results:?} for {transaction_id:?}"
+                        );
                         CR::Prepare(
                             if results.contains_key(&CR::Prepare(OccPrepareResult::Fail)) {
                                 OccPrepareResult::Fail
@@ -120,6 +122,8 @@ impl<K: Key, V: Value> Replica<K, V> {
                 return;
             };
 
+            eprintln!("BACKUP COORD got {result:?} for  {transaction_id:?} @ {commit:?}");
+
             match result {
                 OccPrepareResult::Ok => {
                     client
@@ -135,14 +139,12 @@ impl<K: Key, V: Value> Replica<K, V> {
                         .invoke_inconsistent(IO::Abort {
                             transaction_id,
                             transaction,
-                            commit,
+                            commit: Some(commit),
                         })
                         .await
                 }
                 _ => {}
             }
-
-            eprintln!("BACKUP COORD got {result:?} for {commit:?}");
         }
     }
 }
@@ -174,11 +176,9 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transaction,
                 commit,
             } => {
-                let old = self
-                    .transaction_log
-                    .insert(*transaction_id, (*commit, transaction.clone(), true));
-                if let Some((_, _, was_committed)) = old {
-                    debug_assert!(was_committed);
+                let old = self.transaction_log.insert(*transaction_id, *commit);
+                if let Some(ts) = old {
+                    debug_assert_eq!(ts, *commit);
                 }
                 self.inner
                     .commit(*transaction_id, transaction.clone(), *commit);
@@ -188,13 +188,27 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transaction,
                 commit,
             } => {
-                let old = self
-                    .transaction_log
-                    .insert(*transaction_id, (*commit, transaction.clone(), false));
-                if let Some((_, _, was_committed)) = old {
-                    debug_assert!(!was_committed);
+                if commit
+                    .map(|commit| {
+                        self.inner
+                            .prepared
+                            .get(transaction_id)
+                            .map(|(ts, _)| *ts == commit)
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(true)
+                {
+                    self.inner.remove_prepared(*transaction_id);
                 }
-                self.inner.abort(*transaction_id);
+                if let Some(commit) = commit {
+                    debug_assert!(!self
+                        .transaction_log
+                        .get(transaction_id)
+                        .map(|ts| ts != commit)
+                        .unwrap_or(true));
+                } else {
+                    debug_assert!(!self.transaction_log.contains_key(transaction_id));
+                }
             }
         }
     }
@@ -210,19 +224,14 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 // In theory, could check the other conditions first, but
                 // that might hide bugs.
                 OccPrepareResult::TooOld
-            } else if let Some((ts, _, committed)) = self.transaction_log.get(transaction_id) {
-                if *committed {
-                    if commit == ts {
-                        // Already committed at this timestamp.
-                        OccPrepareResult::Ok
-                    } else {
-                        // Committed at a different timestamp.
-                        OccPrepareResult::Retry { proposed: ts.time }
-                    }
-                } else {
-                    // Already aborted or committed at a different timestamp.
-                    OccPrepareResult::Fail
-                }
+            } else if self
+                .transaction_log
+                .get(transaction_id)
+                .map(|ts| ts == commit)
+                .unwrap_or(false)
+            {
+                // Already committed at this timestamp.
+                OccPrepareResult::Ok
             } else if self
                 .inner
                 .prepared
@@ -239,9 +248,18 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     .get(transaction_id)
                     .map(|(c, _)| c.time < self.min_prepare_time)
                     .unwrap_or(false)
+                || self
+                    .transaction_log
+                    .get(transaction_id)
+                    .map(|ts| ts.time < self.min_prepare_time)
+                    .unwrap_or(false)
             {
                 // Too late to prepare or reprepare.
                 OccPrepareResult::TooLate
+            } else if let Some(ts) = self.transaction_log.get(transaction_id) {
+                // Committed at a different timestamp.
+                debug_assert_ne!(ts, commit);
+                OccPrepareResult::Retry { proposed: ts.time }
             } else {
                 self.inner
                     .prepare(*transaction_id, transaction.clone(), *commit, *backup)
@@ -275,10 +293,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     backup,
                 } => {
                     if matches!(entry.result, CR::Prepare(OccPrepareResult::Ok)) {
-                        if !self.inner.prepared.contains_key(transaction_id)
-                            && !self.transaction_log.contains_key(transaction_id)
-                            && !*backup
-                        {
+                        if !self.transaction_log.contains_key(transaction_id) && !*backup {
                             // Enough other replicas agreed to prepare
                             // the transaction so it must be okay.
                             self.inner
@@ -305,36 +320,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 continue;
             }
 
-            match &entry.op {
-                IO::Commit {
-                    transaction_id,
-                    transaction,
-                    commit,
-                } => {
-                    self.inner
-                        .commit(*transaction_id, transaction.clone(), *commit);
-                    let old = self
-                        .transaction_log
-                        .insert(*transaction_id, (*commit, transaction.clone(), true));
-                    if let Some((_, _, was_committed)) = old {
-                        debug_assert!(was_committed);
-                    }
-                }
-                IO::Abort {
-                    transaction_id,
-                    transaction,
-                    commit,
-                } => {
-                    self.inner.abort(*transaction_id);
-                    let old = self
-                        .transaction_log
-                        .insert(*transaction_id, (*commit, transaction.clone(), false));
-                    if let Some((_, _, was_committed)) = old {
-                        debug_assert!(!was_committed);
-                    }
-                }
-                _ => unreachable!(),
-            }
+            self.exec_inconsistent(&entry.op);
         }
     }
 
@@ -373,19 +359,43 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 } => {
                     ret.insert(
                         *op_id,
-                        CR::Prepare(
-                            if commit.time < self.min_prepare_time
-                                || self
-                                    .inner
-                                    .prepared
-                                    .get(transaction_id)
-                                    .map(|(c, _)| c.time < self.min_prepare_time)
-                                    .unwrap_or(false)
+                        CR::Prepare({
+                            let result = if let &CR::Prepare(result) = reply {
+                                result
+                            } else {
+                                debug_assert!(false);
+                                OccPrepareResult::Abstain
+                            };
+
+                            if self
+                                .transaction_log
+                                .get(transaction_id)
+                                .map(|ts| ts == commit)
+                                .unwrap_or(false)
+                                || !result.is_ok()
                             {
-                                OccPrepareResult::TooLate
-                            } else if !self.transaction_log.contains_key(transaction_id)
-                                && matches!(reply, CR::Prepare(OccPrepareResult::Ok))
-                            {
+                                result
+                                /*
+                                } else if commit.time < self.min_prepare_time
+                                    || self
+                                        .inner
+                                        .prepared
+                                        .get(transaction_id)
+                                        .map(|(c, _)| c.time < self.min_prepare_time)
+                                        .unwrap_or(false)
+                                    || self
+                                        .transaction_log
+                                        .get(transaction_id)
+                                        .map(|ts| ts.time < self.min_prepare_time)
+                                        .unwrap_or(false)
+                                {
+                                    OccPrepareResult::TooLate
+                                */
+                            } else {
+                                debug_assert!(!self.transaction_log.contains_key(transaction_id));
+
+                                // Analogous to the IR slow path.
+                                //
                                 // Ensure the successful prepare is possible and, if so, durable.
                                 self.inner.prepare(
                                     *transaction_id,
@@ -393,13 +403,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                                     *commit,
                                     *backup,
                                 )
-                            } else if let CR::Prepare(result) = reply {
-                                *result
-                            } else {
-                                debug_assert!(false);
-                                OccPrepareResult::Abstain
-                            },
-                        ),
+                            }
+                        }),
                     );
                 }
                 CO::RaiseMinPrepareTime { time } => {
@@ -430,6 +435,15 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                         *op_id,
                         CR::Prepare(if commit.time < self.gc_watermark {
                             OccPrepareResult::TooOld
+                        } else if self
+                            .inner
+                            .prepared
+                            .get(transaction_id)
+                            .map(|(c, _)| c == commit)
+                            .unwrap_or(false)
+                        {
+                            // Already prepared at this timestamp.
+                            OccPrepareResult::Ok
                         } else if commit.time < self.min_prepare_time
                             || self
                                 .inner
@@ -469,11 +483,12 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
         membership: &IrMembership<T>,
         transport: &T,
     ) {
+        // println!("there are {} prepared transactions", self.inner.prepared.len());
         let threshold: u64 = transport.time_offset(-500);
         for (transaction_id, (commit, transaction)) in &self.inner.prepared {
             if commit.time > threshold {
                 // Allow the client to finish on its own.
-                break;
+                continue;
             }
             let future = Self::recover_coordination(
                 *transaction_id,

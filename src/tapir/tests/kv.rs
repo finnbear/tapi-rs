@@ -1,5 +1,6 @@
 use futures::future::join_all;
 use rand::{thread_rng, Rng};
+use tokio::time::timeout;
 
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
@@ -186,7 +187,7 @@ async fn increment_parallel(num_replicas: usize) {
         .filter(|ok| *ok)
         .count() as i64;
 
-    Transport::sleep(Duration::from_secs(1)).await;
+    Transport::sleep(Duration::from_secs(3)).await;
 
     let txn = clients[1].begin();
     let result = txn.get(0).await.unwrap_or_default();
@@ -260,32 +261,43 @@ async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize)
 
 #[tokio::test]
 async fn coordinator_recovery() {
-    'outer: for n in (0..80).chain((80..500).step_by(10)) {
-        let (replicas, clients) = build_kv(true, 3, 2);
+    let (replicas, clients) = build_kv(true, 3, 3);
+
+    'outer: for n in (0..100).chain((100..500).step_by(10)) {
+        let conflicting = clients[2].begin();
+        conflicting.get(n).await;
+        tokio::spawn(conflicting.only_prepare());
+
+        let conflicting = clients[2].begin();
+        conflicting.put(n, Some(1));
+        tokio::spawn(conflicting.only_prepare());
 
         let txn = clients[0].begin();
-        txn.put(0, Some(42));
+        txn.put(n, Some(42));
         let result = Arc::new(Mutex::new(Option::<Option<TapirTimestamp>>::None));
 
         {
             let result = Arc::clone(&result);
             tokio::spawn(async move {
-                let ts = txn.commit2(Some(Duration::from_millis(n))).await;
+                let ts = txn.commit2(Some(Duration::from_millis(n as u64))).await;
                 *result.lock().unwrap() = Some(ts);
             });
         }
 
-        //tokio::time::sleep(Duration::from_secs(1)).await;
+        Transport::sleep(Duration::from_millis(thread_rng().gen_range(0..100))).await;
 
         for i in 0..100 {
             let txn = clients[1].begin();
-            let read = txn.get(0).await;
+            let read = txn.get(n).await;
             println!("{n} try {i} read {read:?}");
-            if let Some(ts) = txn.commit().await {
+
+            if let Ok(Some(ts)) = timeout(Duration::from_secs(5), txn.commit()).await {
                 let result = result.lock().unwrap();
                 if let Some(result) = *result {
                     if let Some(result) = result {
                         assert_eq!(read.is_some(), ts > result);
+                    } else {
+                        assert!(read.is_none());
                     }
                 }
                 continue 'outer;

@@ -46,9 +46,9 @@ pub trait Upcalls: Sized + Send + Serialize + DeserializeOwned + 'static {
     /// Unlogged result.
     type UR: TransportMessage;
     /// Inconsistent operation.
-    type IO: TransportMessage;
+    type IO: TransportMessage + Eq;
     /// Consensus operation.
-    type CO: TransportMessage;
+    type CO: TransportMessage + Eq;
     /// Consensus result.
     type CR: TransportMessage + Eq + Hash;
 
@@ -287,19 +287,24 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                             state: None,
                         }));
                     }
-                    let entry =
-                        sync.record
-                            .inconsistent
-                            .entry(op_id)
-                            .or_insert(RecordInconsistentEntry {
+
+                    let state = match sync.record.inconsistent.entry(op_id) {
+                        Entry::Vacant(vacant) => {
+                            vacant.insert(RecordInconsistentEntry {
                                 op,
                                 state: RecordEntryState::Tentative,
-                            });
+                            }).state
+                        }
+                        Entry::Occupied(occupied) => {
+                            debug_assert_eq!(occupied.get().op, op);
+                            occupied.get().state
+                        }
+                    };
 
                     return Some(Message::<U>::ReplyInconsistent(ReplyInconsistent {
                         op_id,
                         view_number: sync.view.number,
-                        state: Some(entry.state),
+                        state: Some(state),
                     }));
                 }
             }
@@ -316,6 +321,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                     let (result, state) = match sync.record.consensus.entry(op_id) {
                         Entry::Occupied(entry) => {
                             let entry = entry.get();
+                            debug_assert_eq!(entry.op, op);
                             (entry.result.clone(), entry.state)
                         }
                         Entry::Vacant(vacant) => {

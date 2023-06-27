@@ -224,7 +224,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
             IO::Abort {
                 transaction_id: lock.id,
                 transaction: lock.inner.clone(),
-                commit: prepared_timestamp,
+                commit: None,
             }
         });
         drop(lock);

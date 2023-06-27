@@ -27,6 +27,14 @@ pub struct Transaction<K, V, TS> {
     pub write_set: HashMap<K, Option<V>>,
 }
 
+impl<K: Eq + Hash, V: PartialEq, TS: PartialEq> PartialEq for Transaction<K, V, TS> {
+    fn eq(&self, other: &Self) -> bool {
+        self.read_set == other.read_set && self.write_set == other.write_set
+    }
+}
+
+impl<K: Eq + Hash, V: Eq, TS: Eq> Eq for Transaction<K, V, TS> {}
+
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct Id {
     pub client_id: IrClientId,

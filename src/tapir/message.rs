@@ -30,15 +30,60 @@ pub enum IO<K, V> {
         commit: Timestamp,
     },
     /// Abort an unsuccessfully prepared transaction.
+    ///
+    /// Unlike TAPIR, tolerate `Abort` at any timestamp except
+    /// that of a successful `Commit`.
     Abort {
         transaction_id: OccTransactionId,
         /// Same as unsuccessfully prepared transaction.
         #[serde(bound(deserialize = "K: Eq + Deserialize<'de> + Hash, V: Deserialize<'de>"))]
         transaction: OccTransaction<K, V, Timestamp>,
-        /// Same as unsuccessfully prepared commit timestamp.
-        commit: Timestamp,
+        /// Same as unsuccessfully prepared commit timestamp or `None` to abort at every timestamp.
+        commit: Option<Timestamp>,
     },
 }
+
+impl<K: Eq + Hash, V: PartialEq> PartialEq for IO<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Commit {
+                    transaction_id,
+                    transaction,
+                    commit,
+                },
+                Self::Commit {
+                    transaction_id: other_transaction_id,
+                    transaction: other_transaction,
+                    commit: other_commit,
+                },
+            ) => {
+                transaction_id == other_transaction_id
+                    && transaction == other_transaction
+                    && commit == other_commit
+            }
+            (
+                Self::Abort {
+                    transaction_id,
+                    transaction,
+                    commit,
+                },
+                Self::Abort {
+                    transaction_id: other_transaction_id,
+                    transaction: other_transaction,
+                    commit: other_commit,
+                },
+            ) => {
+                transaction_id == other_transaction_id
+                    && transaction == other_transaction
+                    && commit == other_commit
+            }
+            _ => false,
+        }
+    }
+}
+
+impl<K: Eq + Hash, V: Eq> Eq for IO<K, V> {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CO<K, V> {
@@ -58,6 +103,39 @@ pub enum CO<K, V> {
         time: u64,
     },
 }
+
+impl<K: Eq + Hash, V: PartialEq> PartialEq for CO<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Prepare {
+                    transaction_id,
+                    transaction,
+                    commit,
+                    backup,
+                },
+                Self::Prepare {
+                    transaction_id: other_transaction_id,
+                    transaction: other_transaction,
+                    commit: other_commit,
+                    backup: other_backup,
+                },
+            ) => {
+                transaction_id == other_transaction_id
+                    && transaction == other_transaction
+                    && commit == other_commit
+                    && backup == other_backup
+            }
+            (
+                Self::RaiseMinPrepareTime { time },
+                Self::RaiseMinPrepareTime { time: other_time },
+            ) => time == other_time,
+            _ => false,
+        }
+    }
+}
+
+impl<K: Eq + Hash, V: Eq> Eq for CO<K, V> {}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum CR {
