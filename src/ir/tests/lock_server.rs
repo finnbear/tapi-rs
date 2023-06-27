@@ -25,10 +25,10 @@ async fn test_lock_server() {
 }
 
 async fn lock_server(num_replicas: usize) {
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Eq, PartialEq)]
     struct Lock(IrClientId);
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Eq, PartialEq)]
     struct Unlock(IrClientId);
 
     #[derive(Debug, Clone, Eq, PartialEq, Hash)]

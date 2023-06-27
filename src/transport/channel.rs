@@ -97,7 +97,6 @@ impl<M: Message> Transport for Channel<M> {
     }
 
     fn time_offset(&self, offset: i64) -> u64 {
-        use rand::Rng;
         (SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()

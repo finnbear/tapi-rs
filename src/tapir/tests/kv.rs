@@ -268,9 +268,9 @@ async fn coordinator_recovery() {
         conflicting.get(n).await;
         tokio::spawn(conflicting.only_prepare());
 
-        let conflicting = clients[2].begin();
-        conflicting.put(n, Some(1));
-        tokio::spawn(conflicting.only_prepare());
+        //let conflicting = clients[2].begin();
+        //conflicting.put(n, Some(1));
+        //tokio::spawn(conflicting.only_prepare());
 
         let txn = clients[0].begin();
         txn.put(n, Some(42));

@@ -280,7 +280,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
             Message::<U>::ProposeInconsistent(ProposeInconsistent { op_id, op, recent }) => {
                 if sync.status.is_normal() {
                     if !recent.is_recent_relative_to(sync.view.number) {
-                        eprintln!("ancient relative to {:?}", sync.view.number);
+                        // eprintln!("ancient relative to {:?}", sync.view.number);
                         return Some(Message::<U>::ReplyInconsistent(ReplyInconsistent {
                             op_id,
                             view_number: sync.view.number,
@@ -311,7 +311,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
             Message::<U>::ProposeConsensus(ProposeConsensus { op_id, op, recent }) => {
                 if sync.status.is_normal() {
                     if !recent.is_recent_relative_to(sync.view.number) {
-                        eprintln!("ancient relative to {:?}", sync.view.number);
+                        // eprintln!("ancient relative to {:?}", sync.view.number);
                         return Some(Message::<U>::ReplyConsensus(ReplyConsensus {
                             op_id,
                             view_number: sync.view.number,

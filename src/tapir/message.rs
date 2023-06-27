@@ -33,12 +33,16 @@ pub enum IO<K, V> {
     ///
     /// Unlike TAPIR, tolerate `Abort` at any timestamp except
     /// that of a successful `Commit`.
+    ///
+    /// Note: Clients may send spurious aborts so replicas will
+    /// ignore client aborts during coordinator recovery.
     Abort {
         transaction_id: OccTransactionId,
         /// Same as unsuccessfully prepared transaction.
         #[serde(bound(deserialize = "K: Eq + Deserialize<'de> + Hash, V: Deserialize<'de>"))]
         transaction: OccTransaction<K, V, Timestamp>,
-        /// Same as unsuccessfully prepared commit timestamp or `None` to abort at every timestamp.
+        /// Same as unsuccessfully prepared commit timestamp for backup coordinators or `None`
+        /// used by clients to abort at every timestamp.
         commit: Option<Timestamp>,
     },
 }
