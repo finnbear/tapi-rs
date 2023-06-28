@@ -247,22 +247,21 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 // In theory, could check the other conditions first, but
                 // that might hide bugs.
                 OccPrepareResult::TooOld
-            } else if self
-                .transaction_log
-                .get(transaction_id)
-                .map(|(ts, c)| *c && ts == commit)
-                .unwrap_or(false)
-            {
-                // Already committed at this timestamp.
-                OccPrepareResult::Ok
-            } else if self
-                .transaction_log
-                .get(transaction_id)
-                .map(|(_, c)| !*c)
-                .unwrap_or(false)
-            {
-                // Already aborted by client.
-                OccPrepareResult::Fail
+            } else if let Some((ts, c)) = self.transaction_log.get(transaction_id) {
+                if *c {
+                    if ts == commit {
+                        // Already committed at this timestamp.
+                        OccPrepareResult::Ok
+                    } else if ts.time < self.min_prepare_time {
+                        // Committed at a different timestamp.
+                        OccPrepareResult::Retry { proposed: ts.time }
+                    } else {
+                        OccPrepareResult::TooLate
+                    }
+                } else {
+                    // Already aborted by client.
+                    OccPrepareResult::Fail
+                }
             } else if let Some(f) = self
                 .inner
                 .prepared
@@ -287,19 +286,9 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     .get(transaction_id)
                     .map(|(c, _, _)| c.time < self.min_prepare_time)
                     .unwrap_or(false)
-                || self
-                    .transaction_log
-                    .get(transaction_id)
-                    .map(|(ts, _)| ts.time < self.min_prepare_time)
-                    .unwrap_or(false)
             {
                 // Too late to prepare or reprepare.
                 OccPrepareResult::TooLate
-            } else if let Some((ts, c)) = self.transaction_log.get(transaction_id) {
-                // Committed at a different timestamp.
-                debug_assert_ne!(ts, commit);
-                debug_assert!(*c);
-                OccPrepareResult::Retry { proposed: ts.time }
             } else {
                 self.inner
                     .prepare(*transaction_id, transaction.clone(), *commit, *backup)
@@ -458,22 +447,15 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                             || !result.is_ok()
                         {
                             result
-                            /*
-                            } else if commit.time < self.min_prepare_time
-                                || self
-                                    .inner
-                                    .prepared
-                                    .get(transaction_id)
-                                    .map(|(c, _)| c.time < self.min_prepare_time)
-                                    .unwrap_or(false)
-                                || self
-                                    .transaction_log
-                                    .get(transaction_id)
-                                    .map(|ts| ts.time < self.min_prepare_time)
-                                    .unwrap_or(false)
-                            {
-                                OccPrepareResult::TooLate
-                            */
+                        } else if commit.time < self.min_prepare_time
+                            || self
+                                .inner
+                                .prepared
+                                .get(transaction_id)
+                                .map(|(c, _, _)| c.time < self.min_prepare_time)
+                                .unwrap_or(false)
+                        {
+                            OccPrepareResult::TooLate
                         } else {
                             // Analogous to the IR slow path.
                             //
