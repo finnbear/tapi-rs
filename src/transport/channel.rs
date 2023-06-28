@@ -1,14 +1,15 @@
+use super::{Message, Transport};
 use rand::{thread_rng, Rng};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-
-use super::{Message, Transport};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::future::Future;
 use std::ops::Range;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
+
+const LOG: bool = true;
 
 pub struct Registry<M> {
     inner: Arc<RwLock<Inner<M>>>,
@@ -140,7 +141,9 @@ impl<M: Message> Transport for Channel<M> {
         message: impl Into<Self::Message> + Debug,
     ) -> impl Future<Output = R> + 'static {
         let from: usize = self.address;
-        //println!("{from} sending {message:?} to {address}");
+        if LOG {
+            println!("{from} sending {message:?} to {address}");
+        }
         let message = message.into();
         let inner = Arc::clone(&self.inner);
         async move {
@@ -158,7 +161,11 @@ impl<M: Message> Transport for Channel<M> {
                         .map(|r| r.try_into().unwrap_or_else(|_| panic!()));
                     if let Some(result) = result {
                         let should_drop = Self::should_drop(address, from);
-                        // println!("{address} replying {result:?} to {from} (drop = {should_drop})");
+                        if LOG {
+                            println!(
+                                "{address} replying {result:?} to {from} (drop = {should_drop})"
+                            );
+                        }
                         if !should_drop {
                             //Self::random_delay(1..50).await;
                             break result;
@@ -174,7 +181,9 @@ impl<M: Message> Transport for Channel<M> {
     fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + Debug) {
         let from = self.address;
         let should_drop = Self::should_drop(self.address, address);
-        //println!("{from} do-sending {message:?} to {address} (drop = {should_drop})");
+        if LOG {
+            println!("{from} do-sending {message:?} to {address} (drop = {should_drop})");
+        }
         let message = message.into();
         let inner = self.inner.read().unwrap();
         let callback = inner.callbacks.get(address).map(Arc::clone);

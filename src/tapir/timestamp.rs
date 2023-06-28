@@ -1,11 +1,17 @@
-use serde::{Deserialize, Serialize};
-
 use crate::{IrClientId, OccTimestamp};
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct Timestamp {
     pub time: u64,
     pub client_id: IrClientId,
+}
+
+impl Debug for Timestamp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Ts({}, {})", self.time, self.client_id.0)
+    }
 }
 
 impl Default for Timestamp {

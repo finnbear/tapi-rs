@@ -21,10 +21,10 @@ pub struct Store<K, V, TS> {
         deserialize = "K: Deserialize<'de> + Hash + Eq, V: Deserialize<'de>, TS: Deserialize<'de> + Ord"
     ))]
     inner: MvccStore<K, V, TS>,
-    /// Transactions which may commit in the future (and whether they are undergoing
-    /// coordinator recovery).
+    /// Transactions which may commit in the future (and whether the prepare was
+    /// finalized in the IR sense).
     #[serde(with = "vectorize")]
-    pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>)>,
+    pub prepared: HashMap<TransactionId, (TS, Transaction<K, V, TS>, bool)>,
     // Cache.
     #[serde(with = "vectorize", bound(deserialize = "TS: Deserialize<'de> + Ord"))]
     prepared_reads: HashMap<K, TimestampSet<TS>>,
@@ -172,11 +172,17 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
 
             // There may be a pending write that would invalidate the read version.
             if let Some(writes) = self.prepared_writes.get(key) {
-                if self.linearizable
-                    || writes
-                        .range((Bound::Excluded(*read), Bound::Excluded(commit)))
-                        .next()
-                        .is_some()
+                if writes
+                    .range((
+                        if self.linearizable {
+                            Bound::Unbounded
+                        } else {
+                            Bound::Excluded(*read)
+                        },
+                        Bound::Excluded(commit),
+                    ))
+                    .next()
+                    .is_some()
                 {
                     // Read conflicts with later prepared write.
                     return PrepareResult::Abstain;
@@ -231,7 +237,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
                 proposed: commit.time(),
             }
         } else {
-            self.add_prepared(id, transaction, commit);
+            self.add_prepared(id, transaction, commit, false);
             PrepareResult::Ok
         }
     }
@@ -258,6 +264,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
         id: TransactionId,
         transaction: Transaction<K, V, TS>,
         commit: TS,
+        finalized: bool,
     ) {
         for key in transaction.read_set.keys() {
             self.prepared_reads
@@ -272,7 +279,9 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
                 .insert(commit, ());
         }
 
-        if let Some((old_commit, transaction)) = self.prepared.insert(id, (commit, transaction)) {
+        if let Some((old_commit, transaction, _)) =
+            self.prepared.insert(id, (commit, transaction, finalized))
+        {
             if old_commit != commit {
                 self.remove_prepared_inner(id, transaction, old_commit);
             }
@@ -280,7 +289,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
     }
 
     pub fn remove_prepared(&mut self, id: TransactionId) -> bool {
-        if let Some((commit, transaction)) = self.prepared.remove(&id) {
+        if let Some((commit, transaction, _)) = self.prepared.remove(&id) {
             self.remove_prepared_inner(id, transaction, commit);
             true
         } else {
