@@ -354,11 +354,19 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 } => {
                     if !*backup {
                         if matches!(entry.result, CR::Prepare(OccPrepareResult::Ok)) {
-                            if !self.inner.prepared.contains_key(transaction_id)
+                            if self
+                                .inner
+                                .prepared
+                                .get(transaction_id)
+                                .map(|(ts, _, _)| ts == commit)
+                                .unwrap_or(true)
                                 && !self.transaction_log.contains_key(transaction_id)
                             {
                                 // Enough other replicas agreed to prepare
                                 // the transaction so it must be okay.
+                                //
+                                // Finalize it immediately since we are syncing
+                                // from the leader's record.
                                 self.inner.add_prepared(
                                     *transaction_id,
                                     transaction.clone(),
@@ -493,56 +501,10 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
             }
         }
 
+        // Leader is consistent with a quorum so can decide consensus
+        // results.
         for (op_id, request, _) in &u {
-            match request {
-                CO::Prepare {
-                    transaction_id,
-                    transaction,
-                    commit,
-                    backup,
-                } => {
-                    ret.insert(
-                        *op_id,
-                        CR::Prepare(if commit.time < self.gc_watermark {
-                            OccPrepareResult::TooOld
-                        } else if self
-                            .inner
-                            .prepared
-                            .get(transaction_id)
-                            .map(|(c, _, _)| c == commit)
-                            .unwrap_or(false)
-                        {
-                            // Already prepared at this timestamp.
-                            OccPrepareResult::Ok
-                        } else if commit.time < self.min_prepare_time
-                            || self
-                                .inner
-                                .prepared
-                                .get(transaction_id)
-                                .map(|(c, _, _)| c.time < self.min_prepare_time)
-                                .unwrap_or(false)
-                        {
-                            OccPrepareResult::TooLate
-                        } else {
-                            self.inner.prepare(
-                                *transaction_id,
-                                transaction.clone(),
-                                *commit,
-                                *backup,
-                            )
-                        }),
-                    );
-                }
-                CO::RaiseMinPrepareTime { time } => {
-                    self.min_prepare_time = self.min_prepare_time.max(*time);
-                    ret.insert(
-                        *op_id,
-                        CR::RaiseMinPrepareTime {
-                            time: self.min_prepare_time,
-                        },
-                    );
-                }
-            }
+            ret.insert(*op_id, self.exec_consensus(request));
         }
 
         ret
