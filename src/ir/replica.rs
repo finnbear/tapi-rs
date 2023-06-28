@@ -57,7 +57,8 @@ pub trait Upcalls: Sized + Send + Serialize + DeserializeOwned + 'static {
     fn exec_consensus(&mut self, op: &Self::CO) -> Self::CR;
     /// Extension to TAPIR: Called when an entry becomes finalized. This
     /// addresses a potential issue with `merge` rolling back finalized
-    /// operations. Not called during follower `sync`.
+    /// operations. The application assumes responsibility for calling
+    /// this during `sync` and, if necessary, `merge`.
     fn finalize_consensus(&mut self, op: &Self::CO, res: &Self::CR) {
         // No-op.
         let _ = (op, res);
