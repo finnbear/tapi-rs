@@ -33,9 +33,6 @@ pub enum IO<K, V> {
     ///
     /// Unlike TAPIR, tolerate `Abort` at any timestamp except
     /// that of a successful `Commit`.
-    ///
-    /// Note: Clients may send spurious aborts so replicas will
-    /// ignore client aborts during coordinator recovery.
     Abort {
         transaction_id: OccTransactionId,
         /// Same as unsuccessfully prepared transaction.

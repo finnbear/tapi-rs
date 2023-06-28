@@ -182,8 +182,11 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     .transaction_log
                     .insert(*transaction_id, (*commit, true));
                 if let Some((ts, committed)) = old {
-                    debug_assert!(committed, "{transaction_id:?}");
-                    debug_assert_eq!(ts, *commit, "{transaction_id:?}");
+                    debug_assert!(committed, "{transaction_id:?} aborted");
+                    debug_assert_eq!(
+                        ts, *commit,
+                        "{transaction_id:?} committed at (different) {ts:?}"
+                    );
                 }
                 self.inner
                     .commit(*transaction_id, transaction.clone(), *commit);
@@ -195,42 +198,36 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
             } => {
                 if commit
                     .map(|commit| {
+                        debug_assert!(
+                            !self
+                                .transaction_log
+                                .get(transaction_id)
+                                .map(|(ts, c)| *c && *ts == commit)
+                                .unwrap_or(false),
+                            "{transaction_id:?} committed at {commit:?}"
+                        );
                         self.inner
                             .prepared
                             .get(transaction_id)
                             .map(|(ts, _, _)| *ts == commit)
-                            .unwrap_or(false)
+                            .unwrap_or(true)
                     })
-                    .unwrap_or(
-                        self.inner
-                            .prepared
-                            .get(transaction_id)
-                            .map(|(ts, _, _)| ts.time >= self.min_prepare_time)
-                            .unwrap_or(false),
-                    )
+                    .unwrap_or_else(|| {
+                        debug_assert!(
+                            !self
+                                .transaction_log
+                                .get(transaction_id)
+                                .map(|(_, c)| *c)
+                                .unwrap_or(false),
+                            "{transaction_id:?} committed"
+                        );
+                        // TODO: Timestamp.
+                        self.transaction_log
+                            .insert(*transaction_id, (Default::default(), false));
+                        true
+                    })
                 {
                     self.inner.remove_prepared(*transaction_id);
-                }
-                if let Some(commit) = commit {
-                    debug_assert!(
-                        !self
-                            .transaction_log
-                            .get(transaction_id)
-                            .map(|(ts, c)| *c && ts == commit)
-                            .unwrap_or(false),
-                        "{transaction_id:?} committed at {commit:?}"
-                    );
-                } else {
-                    debug_assert!(
-                        !self
-                            .transaction_log
-                            .get(transaction_id)
-                            .map(|(_, c)| *c)
-                            .unwrap_or(false),
-                        "{transaction_id:?} committed"
-                    );
-                    self.transaction_log
-                        .insert(*transaction_id, (Default::default(), false));
                 }
             }
         }
@@ -310,7 +307,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 commit,
                 backup,
             } => {
-                if let Some((ts, _, finalized)) = self.inner.prepared.get_mut(transaction_id) {
+                if !*backup && let Some((ts, _, finalized)) = self.inner.prepared.get_mut(transaction_id) {
                     if *commit == *ts {
                         *finalized = true;
                     }
