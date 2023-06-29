@@ -407,7 +407,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                             .get(transaction_id)
                             .map(|(ts, _, _)| ts == commit)
                             .unwrap_or(false)
-                        {      
+                        {
                             eprintln!(
                                 "syncing {:?} {op_id:?} prepare for {transaction_id:?} at {commit:?}",
                                 entry.result
@@ -469,77 +469,53 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
 
         // Preserve any potentially valid fast-path consensus operations.
         for (op_id, (request, reply)) in &d {
-            match request {
+            let result = match request {
                 CO::Prepare {
                     transaction_id,
                     transaction,
                     commit,
                     backup,
                 } => {
-                    let result = CR::Prepare({
-                        let result = if let &CR::Prepare(result) = reply {
-                            result
-                        } else {
-                            debug_assert!(false);
-                            OccPrepareResult::Abstain
-                        };
+                    let result = if matches!(reply, CR::Prepare(OccPrepareResult::Ok)) {
+                        // Possibly successful fast quorum.
+                        self.exec_consensus(request)
+                    } else {
+                        reply.clone()
+                    };
 
-                        if self
-                            .transaction_log
-                            .get(transaction_id)
-                            .map(|(ts, c)| !*c || (*c && ts == commit))
-                            .unwrap_or(false)
-                            || !result.is_ok()
-                        {
-                            eprintln!("merge preserving {op_id:?} result {result:?} for {transaction_id:?} at {commit:?}");
-                            result
-                        } else if commit.time < self.min_prepare_time
-                            || self
-                                .inner
-                                .prepared
-                                .get(transaction_id)
-                                .map(|(c, _, _)| c != commit && c.time < self.min_prepare_time)
-                                .unwrap_or(false)
-                        {
-                            eprintln!("merge found {transaction_id:?} at {commit:?} was TooLate in {op_id:?}",);
-                            OccPrepareResult::TooLate
-                        } else {
-                            // Analogous to the IR slow path.
-                            //
-                            // Ensure the successful prepare is possible and, if so, durable.
-
-                            let ret = self.inner.prepare(
-                                *transaction_id,
-                                transaction.clone(),
-                                *commit,
-                                *backup,
-                            );
-                            eprintln!("merge found {transaction_id:?} at {commit:?} was {ret:?} in {op_id:?}");
-
-                            ret
-                        }
-                    });
+                    if &result == reply {
+                        eprintln!("merge preserving {op_id:?} {transaction_id:?} result {result:?} at {commit:?}");
+                    } else {
+                        eprintln!("merge changed {op_id:?} {transaction_id:?} at {commit:?} from {reply:?} to {result:?}");
+                    }
 
                     self.finalize_consensus(request, &result);
-                    ret.insert(*op_id, result);
+                    result
                 }
                 CO::RaiseMinPrepareTime { time } => {
-                    ret.insert(*op_id, self.exec_consensus(request));
-                    /*
-                    ret.insert(
-                        *op_id,
-                        CR::RaiseMinPrepareTime {
-                            time: if let CR::RaiseMinPrepareTime { time } = reply {
-                                *time
-                            } else {
-                                debug_assert!(false);
-                                *time
-                            },
-                        },
-                    );
-                    */
+                    let received = if let CR::RaiseMinPrepareTime { time } = reply {
+                        *time
+                    } else {
+                        debug_assert!(false);
+                        0
+                    };
+
+                    if received >= *time {
+                        // Possibly successful fast quorum.
+                        let mut result = self.exec_consensus(request);
+                        if let CR::RaiseMinPrepareTime { time: new_time } = &mut result {
+                            // Don't grant time in excess of the requested time,
+                            // which should preserve semantics better if reordered.
+                            *new_time = (*new_time).min(*time);
+                        }
+                        result
+                    } else {
+                        // Preserve unsuccessful result.
+                        reply.clone()
+                    }
                 }
-            }
+            };
+            ret.insert(*op_id, result);
         }
 
         // Leader is consistent with a quorum so can decide consensus
