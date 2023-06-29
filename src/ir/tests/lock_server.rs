@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
     IrMessage, IrOpId, IrRecord, IrRecordConsensusEntry, IrReplica, IrReplicaIndex,
     IrReplicaUpcalls, Transport,
 };
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -14,7 +14,6 @@ use std::{
 async fn lock_server_3() {
     lock_server(3).await;
 }
-
 
 #[tokio::test]
 async fn lock_server_5() {

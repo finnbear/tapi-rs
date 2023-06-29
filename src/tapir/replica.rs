@@ -521,7 +521,9 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
         // Leader is consistent with a quorum so can decide consensus
         // results.
         for (op_id, request, _) in &u {
-            ret.insert(*op_id, self.exec_consensus(request));
+            let result = self.exec_consensus(request);
+            eprintln!("merge choosing {result:?} for {op_id:?}");
+            ret.insert(*op_id, result);
         }
 
         ret

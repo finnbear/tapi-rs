@@ -87,18 +87,22 @@ impl<'a, T: Transport> IntoIterator for &'a Membership<T> {
 }
 
 impl Size {
+    /// In a replica group of size 3, this is 1.
     pub fn f(&self) -> usize {
         self.0
     }
 
+    /// In a replica group of size 3, this is 2.
     pub fn f_plus_one(&self) -> usize {
         self.f() + 1
     }
 
+    /// In a replica group of size 3, this is 3.
     pub fn three_over_two_f_plus_one(&self) -> usize {
         (self.f() * 3).div_ceil(2) + 1
     }
 
+    /// In a replica group of size 3, this is 2.
     pub fn f_over_two_plus_one(&self) -> usize {
         self.f().div_ceil(2) + 1
     }

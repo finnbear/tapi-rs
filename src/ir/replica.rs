@@ -420,170 +420,174 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                         }
 
                         let threshold = sync.view.membership.size().f();
-                        for do_view_change in sync.outstanding_do_view_changes.values() {
-                            let matching = sync
-                                .outstanding_do_view_changes
-                                .values()
-                                .filter(|other| other.view_number == do_view_change.view_number);
+                        let matching = sync
+                            .outstanding_do_view_changes
+                            .values()
+                            .filter(|other| other.view_number == sync.view.number);
 
-                            if matching.clone().count() >= threshold {
-                                eprintln!("DOING VIEW CHANGE");
-                                {
-                                    let latest_normal_view = sync.latest_normal_view.max(
-                                        matching
-                                            .clone()
-                                            .map(|r| {
-                                                r.addendum.as_ref().unwrap().latest_normal_view
-                                            })
-                                            .max()
-                                            .unwrap(),
-                                    );
-                                    let mut latest_records = matching
+                        if matching.clone().count() >= threshold {
+                            eprintln!("DOING VIEW CHANGE");
+                            {
+                                let latest_normal_view = sync.latest_normal_view.max(
+                                    matching
                                         .clone()
-                                        .filter(|r| {
+                                        .map(|r| {
                                             r.addendum.as_ref().unwrap().latest_normal_view
-                                                == latest_normal_view
                                         })
-                                        .map(|r| r.addendum.as_ref().unwrap().record.clone())
-                                        .collect::<Vec<_>>();
-                                    if sync.latest_normal_view == latest_normal_view {
-                                        latest_records.push(sync.record.clone());
-                                    }
-                                    eprintln!("have {} latest", latest_records.len());
-
-                                    #[allow(non_snake_case)]
-                                    let mut R = Record::<U>::default();
-                                    let mut entries_by_opid =
-                                        HashMap::<OpId, Vec<RecordConsensusEntry<U::CO, U::CR>>>::new();
-                                    let mut finalized = HashSet::new();
-                                    for r in latest_records {
-                                        for (op_id, entry) in r.inconsistent.clone() {
-                                            match R.inconsistent.entry(op_id) {
-                                                Entry::Vacant(vacant) => {
-                                                    vacant.insert(entry);
-                                                }
-                                                Entry::Occupied(mut occupied) => {
-                                                    if let RecordEntryState::Finalized(view) = entry.state {
-                                                        let state = &mut occupied.get_mut().state;
-                                                        *state = RecordEntryState::Finalized(view);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        for (op_id, entry) in r.consensus.clone() {
-                                            match entry.state {
-                                                RecordEntryState::Finalized(_) => {
-                                                    match R.consensus.entry(op_id) {
-                                                        Entry::Vacant(vacant) => {
-                                                            sync.upcalls.finalize_consensus(&entry.op, &entry.result);
-                                                            vacant.insert(entry);
-                                                        }
-                                                        Entry::Occupied(mut occupied) => {
-                                                            if occupied.get().state.is_tentative() {
-                                                                sync.upcalls.finalize_consensus(&entry.op, &entry.result);
-                                                                occupied.insert(entry);
-                                                            } else {
-                                                                debug_assert_eq!(occupied.get().result, entry.result);
-                                                            }
-                                                        }
-                                                    }
-                                                    finalized.insert(op_id);
-                                                    entries_by_opid.remove(&op_id);
-                                                }
-                                                RecordEntryState::Tentative => {
-                                                    if !finalized.contains(&op_id) {
-                                                        entries_by_opid
-                                                            .entry(op_id)
-                                                            .or_default()
-                                                            .push(entry);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // build d and u
-                                    let mut d =
-                                        HashMap::<OpId, (U::CO, U::CR)>::new();
-                                    let mut u =
-                                        Vec::<(OpId, U::CO, U::CR)>::new();
-
-                                    for (op_id, entries) in entries_by_opid.clone() {
-                                        let mut majority_result_in_d = None;
-
-                                        for entry in &entries {
-                                            let matches = entries
-                                                .iter()
-                                                .filter(|other| other.result == entry.result)
-                                                .count();
-
-                                            if matches
-                                                >= sync.view.membership.size().f_over_two_plus_one()
-                                            {
-                                                majority_result_in_d = Some(entry.result.clone());
-                                                break;
-                                            }
-                                        }
-
-                                        if let Some(majority_result_in_d) = majority_result_in_d {
-                                            d.insert(op_id, (entries[0].op.clone(), majority_result_in_d));
-                                        } else {
-                                            u.extend(entries.into_iter().map(|e| (op_id, e.op, e.result)));
-                                        }
-                                    }
-
-                                    // println!("d = {d:?}");
-                                    // println!("u = {u:?}");
-
-                                    {
-                                        let sync = &mut *sync;
-                                        sync.upcalls.sync(&sync.record, &R);
-                                    }
-
-                                    let results_by_opid =
-                                        sync.upcalls.merge(d, u);
-
-                                    debug_assert_eq!(results_by_opid.len(), entries_by_opid.len());
-
-                                    for (op_id, result) in results_by_opid {
-                                        let mut entries = entries_by_opid.get(&op_id).unwrap();
-                                        let entry = &entries[0];
-                                        sync.upcalls.finalize_consensus(&entry.op, &result);
-                                        R.consensus.insert(
-                                            op_id,
-                                            RecordConsensusEntry {
-                                                op: entry.op.clone(),
-                                                result: result.clone(),
-                                                state: RecordEntryState::Finalized(sync.view.number),
-                                            },
-                                        );
-                                    }
-
-                                    sync.record = R;
+                                        .max()
+                                        .unwrap(),
+                                );
+                                let mut latest_records = matching
+                                    .clone()
+                                    .filter(|r| {
+                                        r.addendum.as_ref().unwrap().latest_normal_view
+                                            == latest_normal_view
+                                    })
+                                    .map(|r| r.addendum.as_ref().unwrap().record.clone())
+                                    .collect::<Vec<_>>();
+                                if sync.latest_normal_view == latest_normal_view {
+                                    latest_records.push(sync.record.clone());
                                 }
-                                sync.changed_view_recently = true;
-                                sync.status = Status::Normal;
-                                sync.view.number = msg_view_number;
-                                sync.latest_normal_view = msg_view_number;
-                                self.persist_view_info(&*sync);
-                                for (index, address) in &sync.view.membership {
-                                    if index == self.index {
-                                        continue;
+                                eprintln!("have {} latest ({:?})", latest_records.len(), sync.outstanding_do_view_changes.iter().map(|(i, dvt)| (i, dvt.view_number, dvt.addendum.as_ref().unwrap().latest_normal_view)).collect::<Vec<_>>());
+
+                                #[allow(non_snake_case)]
+                                let mut R = Record::<U>::default();
+                                let mut entries_by_opid =
+                                    HashMap::<OpId, Vec<RecordConsensusEntry<U::CO, U::CR>>>::new();
+                                let mut finalized = HashSet::new();
+                                for r in latest_records {
+                                    for (op_id, entry) in r.inconsistent.clone() {
+                                        match R.inconsistent.entry(op_id) {
+                                            Entry::Vacant(vacant) => {
+                                                // Mark as finalized as `sync` will execute it.
+                                                vacant.insert(entry).state = RecordEntryState::Finalized(sync.view.number);
+                                            }
+                                            Entry::Occupied(mut occupied) => {
+                                                if let RecordEntryState::Finalized(view) = entry.state {
+                                                    let state = &mut occupied.get_mut().state;
+                                                    *state = RecordEntryState::Finalized(view);
+                                                }
+                                            }
+                                        }
                                     }
-                                    self.inner.transport.do_send(
-                                        address,
-                                        Message::<U>::StartView(StartView {
-                                            record: sync.record.clone(),
-                                            view_number: sync.view.number,
-                                        }),
+                                    for (op_id, entry) in r.consensus.clone() {
+                                        match entry.state {
+                                            RecordEntryState::Finalized(_) => {
+                                                match R.consensus.entry(op_id) {
+                                                    Entry::Vacant(vacant) => {
+                                                        sync.upcalls.finalize_consensus(&entry.op, &entry.result);
+                                                        vacant.insert(entry);
+                                                    }
+                                                    Entry::Occupied(mut occupied) => {
+                                                        if occupied.get().state.is_tentative() {
+                                                            sync.upcalls.finalize_consensus(&entry.op, &entry.result);
+                                                            occupied.insert(entry);
+                                                        } else {
+                                                            debug_assert_eq!(occupied.get().result, entry.result);
+                                                        }
+                                                    }
+                                                }
+                                                finalized.insert(op_id);
+                                                entries_by_opid.remove(&op_id);
+                                            }
+                                            RecordEntryState::Tentative => {
+                                                if !finalized.contains(&op_id) {
+                                                    entries_by_opid
+                                                        .entry(op_id)
+                                                        .or_default()
+                                                        .push(entry);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // build d and u
+                                let mut d =
+                                    HashMap::<OpId, (U::CO, U::CR)>::new();
+                                let mut u =
+                                    Vec::<(OpId, U::CO, U::CR)>::new();
+
+                                for (op_id, entries) in entries_by_opid.clone() {
+                                    debug_assert!(!finalized.contains(&op_id));
+
+                                    let mut majority_result_in_d = None;
+
+                                    for entry in &entries {
+                                        debug_assert!(entry.state.is_tentative());
+
+                                        let matches = entries
+                                            .iter()
+                                            .filter(|other| other.result == entry.result)
+                                            .count();
+
+                                        if matches
+                                            >= sync.view.membership.size().f_over_two_plus_one()
+                                        {
+                                            majority_result_in_d = Some(entry.result.clone());
+                                            break;
+                                        }
+                                    }
+
+                                    if let Some(majority_result_in_d) = majority_result_in_d {
+                                        eprintln!("merge majority replied {:?} to {op_id:?}", majority_result_in_d);
+                                        d.insert(op_id, (entries[0].op.clone(), majority_result_in_d));
+                                    } else {
+                                        eprintln!("merge no majority for {op_id:?}; deciding among {:?}", entries.iter().map(|entry| (entry.result.clone(), entry.state)).collect::<Vec<_>>());
+                                        u.extend(entries.into_iter().map(|e| (op_id, e.op, e.result)));
+                                    }
+                                }
+
+                                // println!("d = {d:?}");
+                                // println!("u = {u:?}");
+
+                                {
+                                    let sync = &mut *sync;
+                                    sync.upcalls.sync(&sync.record, &R);
+                                }
+
+                                let results_by_opid =
+                                    sync.upcalls.merge(d, u);
+
+                                debug_assert_eq!(results_by_opid.len(), entries_by_opid.len());
+
+                                for (op_id, result) in results_by_opid {
+                                    let mut entries = entries_by_opid.get(&op_id).unwrap();
+                                    let entry = &entries[0];
+                                    sync.upcalls.finalize_consensus(&entry.op, &result);
+                                    R.consensus.insert(
+                                        op_id,
+                                        RecordConsensusEntry {
+                                            op: entry.op.clone(),
+                                            result: result.clone(),
+                                            state: RecordEntryState::Finalized(sync.view.number),
+                                        },
                                     );
                                 }
-                                self.inner.transport.persist(
-                                    &format!("checkpoint_{}", sync.view.number.0),
-                                    Some(&sync.upcalls),
-                                );
-                                break;
+
+                                sync.record = R;
                             }
+                            sync.changed_view_recently = true;
+                            sync.status = Status::Normal;
+                            sync.view.number = msg_view_number;
+                            sync.latest_normal_view = msg_view_number;
+                            self.persist_view_info(&*sync);
+                            for (index, address) in &sync.view.membership {
+                                if index == self.index {
+                                    continue;
+                                }
+                                self.inner.transport.do_send(
+                                    address,
+                                    Message::<U>::StartView(StartView {
+                                        record: sync.record.clone(),
+                                        view_number: sync.view.number,
+                                    }),
+                                );
+                            }
+                            self.inner.transport.persist(
+                                &format!("checkpoint_{}", sync.view.number.0),
+                                Some(&sync.upcalls),
+                            );
                         }
                     }
                 }
