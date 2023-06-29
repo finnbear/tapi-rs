@@ -277,12 +277,16 @@ async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize)
 
 #[tokio::test]
 async fn coordinator_recovery_3() {
-    coordinator_recovery(3).await;
+    loop {
+        coordinator_recovery(3).await;
+    }
 }
 
 #[tokio::test]
 async fn coordinator_recovery_5() {
-    coordinator_recovery(5).await;
+    loop {
+        coordinator_recovery(5).await;
+    }
 }
 
 #[tokio::test]

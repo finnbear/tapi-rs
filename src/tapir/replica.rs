@@ -64,19 +64,35 @@ impl<K: Key, V: Value> Replica<K, V> {
                     CO::RaiseMinPrepareTime {
                         time: commit.time + 1,
                     },
-                    |results, size| CR::RaiseMinPrepareTime {
-                        time: results
-                            .keys()
-                            .filter_map(|r| {
-                                if let CR::RaiseMinPrepareTime { time } = r {
-                                    Some(*time)
-                                } else {
+                    |results, size| {
+                        let times = results.iter().filter_map(|(r, c)| {
+                            if let CR::RaiseMinPrepareTime { time } = r {
+                                Some((*time, *c))
+                            } else {
+                                debug_assert!(false);
+                                None
+                            }
+                        });
+
+                        // Find a time that a quorum of replicas agree on.
+                        CR::RaiseMinPrepareTime {
+                            time: times
+                                .clone()
+                                .filter(|&(time, _)| {
+                                    times
+                                        .clone()
+                                        .filter(|&(t, _)| t >= time)
+                                        .map(|(_, c)| c)
+                                        .sum::<usize>()
+                                        >= size.f_plus_one()
+                                })
+                                .map(|(t, _)| t)
+                                .max()
+                                .unwrap_or_else(|| {
                                     debug_assert!(false);
-                                    None
-                                }
-                            })
-                            .max()
-                            .unwrap_or_default(),
+                                    0
+                                }),
+                        }
                     },
                 )
                 .await;
@@ -134,7 +150,7 @@ impl<K: Key, V: Value> Replica<K, V> {
                 return;
             };
 
-            eprintln!("BACKUP COORD got {result:?} for  {transaction_id:?} @ {commit:?}");
+            eprintln!("BACKUP COORD got {result:?} for {transaction_id:?} @ {commit:?}");
 
             match result {
                 OccPrepareResult::Ok => {
@@ -350,7 +366,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 .map(|local| local.state.is_finalized() && local.result == entry.result)
                 .unwrap_or(false)
             {
-                // Record already in local state.
+                // Record already finalized in local state.
                 continue;
             }
 
@@ -361,6 +377,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     commit,
                     backup,
                 } => {
+                    // Backup coordinator prepares don't change state.
                     if !*backup {
                         if matches!(entry.result, CR::Prepare(OccPrepareResult::Ok)) {
                             if self
@@ -376,6 +393,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                                 //
                                 // Finalize it immediately since we are syncing
                                 // from the leader's record.
+                                eprintln!("syncing successful {op_id:?} prepare for {transaction_id:?} at {commit:?}");
                                 self.inner.add_prepared(
                                     *transaction_id,
                                     transaction.clone(),
@@ -389,18 +407,23 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                             .get(transaction_id)
                             .map(|(ts, _, _)| ts == commit)
                             .unwrap_or(false)
-                        {
-                            // TODO: Would it be safe for a backup coordinator to
-                            // trigger this code path?
+                        {      
+                            eprintln!(
+                                "syncing {:?} {op_id:?} prepare for {transaction_id:?} at {commit:?}",
+                                entry.result
+                            );
                             self.inner.remove_prepared(*transaction_id);
                         }
                     }
                 }
                 CO::RaiseMinPrepareTime { .. } => {
                     if let CR::RaiseMinPrepareTime { time } = &entry.result {
-                        self.min_prepare_time = self.min_prepare_time.max(*time);
+                        // Finalized min prepare time is monotonically non-decreasing.
                         self.finalized_min_prepare_time =
                             self.finalized_min_prepare_time.max(*time);
+                        // Can rollback tentative prepared time.
+                        self.min_prepare_time =
+                            self.min_prepare_time.min(self.finalized_min_prepare_time);
                     } else {
                         debug_assert!(false);
                     }
@@ -417,6 +440,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 // Record already finalized in local state.
                 continue;
             }
+
+            eprintln!("syncing inconsistent {op_id:?} {:?}", entry.op);
 
             self.exec_inconsistent(&entry.op);
         }
@@ -466,26 +491,32 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                             .unwrap_or(false)
                             || !result.is_ok()
                         {
+                            eprintln!("merge preserving {op_id:?} result {result:?} for {transaction_id:?} at {commit:?}");
                             result
                         } else if commit.time < self.min_prepare_time
                             || self
                                 .inner
                                 .prepared
                                 .get(transaction_id)
-                                .map(|(c, _, _)| c.time < self.min_prepare_time)
+                                .map(|(c, _, _)| c != commit && c.time < self.min_prepare_time)
                                 .unwrap_or(false)
                         {
+                            eprintln!("merge found {transaction_id:?} at {commit:?} was TooLate in {op_id:?}",);
                             OccPrepareResult::TooLate
                         } else {
                             // Analogous to the IR slow path.
                             //
                             // Ensure the successful prepare is possible and, if so, durable.
-                            self.inner.prepare(
+
+                            let ret = self.inner.prepare(
                                 *transaction_id,
                                 transaction.clone(),
                                 *commit,
                                 *backup,
-                            )
+                            );
+                            eprintln!("merge found {transaction_id:?} at {commit:?} was {ret:?} in {op_id:?}");
+
+                            ret
                         }
                     });
 
@@ -493,6 +524,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     ret.insert(*op_id, result);
                 }
                 CO::RaiseMinPrepareTime { time } => {
+                    ret.insert(*op_id, self.exec_consensus(request));
+                    /*
                     ret.insert(
                         *op_id,
                         CR::RaiseMinPrepareTime {
@@ -504,6 +537,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                             },
                         },
                     );
+                    */
                 }
             }
         }
