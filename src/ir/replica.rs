@@ -366,6 +366,9 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                             entry.state = RecordEntryState::Finalized(sync.view.number);
                             entry.result = result;
                             sync.upcalls.finalize_consensus(&entry.op, &entry.result);
+                        } else if cfg!(debug_assertions) && entry.result != result {
+                            // For diagnostic purposes.
+                            eprintln!("warning: tried to finalize consensus with {result:?} when {:?} was already finalized", entry.result);
                         }
 
                         // Send `Confirm` regardless; the view number gives the

@@ -59,7 +59,7 @@ impl<K: Key, V: Value> Replica<K, V> {
         eprintln!("trying to recover {transaction_id:?}");
         let client = IrClient::<Self, T>::new(membership, transport);
         async move {
-            client
+            let min_prepare = client
                 .invoke_consensus(
                     CO::RaiseMinPrepareTime {
                         time: commit.time + 1,
@@ -80,6 +80,16 @@ impl<K: Key, V: Value> Replica<K, V> {
                     },
                 )
                 .await;
+
+            let CR::RaiseMinPrepareTime { time: min_prepare_time } = min_prepare else {
+                debug_assert!(false);
+                return;
+            };
+
+            if commit.time >= min_prepare_time {
+                // Not ready.
+                return;
+            }
 
             let result = client
                 .invoke_consensus(
@@ -249,11 +259,12 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     if ts == commit {
                         // Already committed at this timestamp.
                         OccPrepareResult::Ok
-                    } else if ts.time < self.min_prepare_time {
+                    } else if *backup {
+                        // Didn't (and will never) commit at this timestamp.
+                        OccPrepareResult::Fail
+                    } else {
                         // Committed at a different timestamp.
                         OccPrepareResult::Retry { proposed: ts.time }
-                    } else {
-                        OccPrepareResult::TooLate
                     }
                 } else {
                     // Already aborted by client.
@@ -291,7 +302,18 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     .prepare(*transaction_id, transaction.clone(), *commit, *backup)
             }),
             CO::RaiseMinPrepareTime { time } => {
-                self.min_prepare_time = self.min_prepare_time.max(*time);
+                // Want to avoid tentative prepare operations materializing later on...
+                self.min_prepare_time = self.min_prepare_time.max(
+                    (*time).min(
+                        self.inner
+                            .prepared
+                            .values()
+                            //.filter(|(_, _, f)| !*f)
+                            .map(|(ts, _, _)| ts.time)
+                            .min()
+                            .unwrap_or(u64::MAX),
+                    ),
+                );
                 CR::RaiseMinPrepareTime {
                     time: self.min_prepare_time,
                 }
@@ -307,7 +329,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 commit,
                 backup,
             } => {
-                if !*backup && let Some((ts, _, finalized)) = self.inner.prepared.get_mut(transaction_id) {
+                if !*backup && matches!(res, CR::Prepare(OccPrepareResult::Ok)) && let Some((ts, _, finalized)) = self.inner.prepared.get_mut(transaction_id) {
                     if *commit == *ts {
                         *finalized = true;
                     }
@@ -315,6 +337,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
             }
             CO::RaiseMinPrepareTime { time } => {
                 self.finalized_min_prepare_time = self.finalized_min_prepare_time.max(*time);
+                self.min_prepare_time = self.min_prepare_time.max(self.finalized_min_prepare_time);
             }
         }
     }

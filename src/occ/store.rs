@@ -1,5 +1,6 @@
 use super::{Timestamp, Transaction, TransactionId};
 use crate::{
+    occ,
     tapir::{Key, Value},
     util::{vectorize, vectorize_btree},
     MvccStore,
@@ -137,7 +138,13 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
     ) -> PrepareResult<TS> {
         if let Entry::Occupied(occupied) = self.prepared.entry(id) {
             if occupied.get().0 == commit {
+                /// Already prepared at this timestamp.
                 return PrepareResult::Ok;
+            } else if dry_run {
+                /// Don't remove from prepared set.
+                let transaction = occupied.get().1.clone();
+                let commit = occupied.get().0;
+                self.remove_prepared_inner(id, transaction, commit);
             } else {
                 // Run the checks again for a new timestamp.
                 self.remove_prepared(id);
@@ -146,6 +153,27 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
 
         // println!("pr = {prepared_reads:?}, pw = {prepared_writes:?}");
 
+        let result = self.occ_check(&transaction, commit);
+
+        // Avoid logical mutation in dry run.
+        if dry_run && let Some((commit, transaction, _)) = self.prepared.get(&id) {
+            self.add_prepared_inner(id, transaction.clone(), *commit);
+        }
+
+        if result.is_ok() {
+            if dry_run {
+                return PrepareResult::Retry {
+                    proposed: commit.time(),
+                };
+            } else {
+                self.add_prepared(id, transaction, commit, false);
+            }
+        }
+
+        result
+    }
+
+    fn occ_check(&self, transaction: &Transaction<K, V, TS>, commit: TS) -> PrepareResult<TS> {
         // Check for conflicts with the read set.
         for (key, read) in &transaction.read_set {
             if *read > commit {
@@ -232,14 +260,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
             }
         }
 
-        if dry_run {
-            PrepareResult::Retry {
-                proposed: commit.time(),
-            }
-        } else {
-            self.add_prepared(id, transaction, commit, false);
-            PrepareResult::Ok
-        }
+        PrepareResult::Ok
     }
 
     pub fn commit(&mut self, id: TransactionId, transaction: Transaction<K, V, TS>, commit: TS) {
@@ -266,6 +287,31 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
         commit: TS,
         finalized: bool,
     ) {
+        match self.prepared.entry(id) {
+            Entry::Vacant(mut vacant) => {
+                vacant.insert((commit, transaction.clone(), finalized));
+                self.add_prepared_inner(id, transaction, commit);
+            }
+            Entry::Occupied(mut occupied) => {
+                if occupied.get().0 == commit {
+                    debug_assert_eq!(occupied.get().1, transaction);
+                    occupied.get_mut().2 = finalized;
+                } else {
+                    let old_commit = occupied.get().0;
+                    occupied.insert((commit, transaction.clone(), finalized));
+                    self.remove_prepared_inner(id, transaction.clone(), old_commit);
+                    self.add_prepared_inner(id, transaction.clone(), commit);
+                }
+            }
+        }
+    }
+
+    fn add_prepared_inner(
+        &mut self,
+        id: TransactionId,
+        transaction: Transaction<K, V, TS>,
+        commit: TS,
+    ) {
         for key in transaction.read_set.keys() {
             self.prepared_reads
                 .entry(key.clone())
@@ -277,14 +323,6 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
                 .entry(key.clone())
                 .or_default()
                 .insert(commit, ());
-        }
-
-        if let Some((old_commit, transaction, _)) =
-            self.prepared.insert(id, (commit, transaction, finalized))
-        {
-            if old_commit != commit {
-                self.remove_prepared_inner(id, transaction, old_commit);
-            }
         }
     }
 

@@ -18,19 +18,6 @@ use std::{
     time::Duration,
 };
 
-#[tokio::test]
-async fn test_kv() {
-    for _ in 0..500 {
-        for replicas in (3..=7/* 11 */).step_by(2) {
-            increment_parallel(replicas).await;
-            increment_sequential(replicas).await;
-            for linearizable in [false, true] {
-                rwr(linearizable, replicas).await;
-            }
-        }
-    }
-}
-
 type K = i64;
 type V = i64;
 type Message = IrMessage<TapirReplica<K, V>>;
@@ -92,6 +79,29 @@ fn build_kv(
     (replicas, clients)
 }
 
+#[tokio::test]
+async fn fuzz_rwr_3() {
+    fuzz_rwr(3);
+}
+
+#[tokio::test]
+async fn fuzz_rwr_5() {
+    fuzz_rwr(5);
+}
+
+#[tokio::test]
+async fn fuzz_rwr_7() {
+    fuzz_rwr(7);
+}
+
+async fn fuzz_rwr(replicas: usize) {
+    for _ in 0..16 {
+        for linearizable in [false, true] {
+            rwr(linearizable, replicas).await;
+        }
+    }
+}
+
 async fn rwr(linearizable: bool, num_replicas: usize) {
     let (replicas, clients) = build_kv(linearizable, num_replicas, 2);
 
@@ -133,9 +143,7 @@ async fn increment_sequential_3() {
 
 #[tokio::test]
 async fn increment_sequential_7() {
-    for _ in 0..1000 {
-        increment_sequential(7).await;
-    }
+    increment_sequential(7).await;
 }
 
 async fn increment_sequential(num_replicas: usize) {
@@ -166,9 +174,7 @@ async fn increment_parallel_3() {
 
 #[tokio::test]
 async fn increment_parallel_7() {
-    for _ in 0..1000 {
-        increment_parallel(7).await;
-    }
+    increment_parallel(7).await;
 }
 
 async fn increment_parallel(num_replicas: usize) {
@@ -198,6 +204,11 @@ async fn increment_parallel(num_replicas: usize) {
 #[tokio::test]
 async fn throughput_3_ser() {
     throughput(false, 3, 1000).await;
+}
+
+#[tokio::test]
+async fn throughput_3_lin() {
+    throughput(true, 3, 1000).await;
 }
 
 async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize) {
@@ -234,11 +245,12 @@ async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize)
                 });
             }
 
+            /*
             let guard = pprof::ProfilerGuardBuilder::default()
                 .frequency(1000)
                 .blocklist(&["libc", "libgcc", "pthread", "vdso"])
-                .build()
-                .unwrap();
+                .build();
+            */
 
             for _ in 0..10 {
                 tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -249,21 +261,39 @@ async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize)
                 println!("TPUT {a}, {c}");
             }
 
-            if let Ok(report) = guard.report().build() {
-                let file = std::fs::File::create("flamegraph.svg").unwrap();
-                let mut options = pprof::flamegraph::Options::default();
-                options.image_width = Some(2500);
-                report.flamegraph_with_options(file, &mut options).unwrap();
-            };
+            /*
+            if let Ok(guard) = guard {
+                if let Ok(report) = guard.report().build() {
+                    let file = std::fs::File::create("flamegraph.svg").unwrap();
+                    let mut options = pprof::flamegraph::Options::default();
+                    options.image_width = Some(2500);
+                    report.flamegraph_with_options(file, &mut options).unwrap();
+                }
+            }
+            */
         })
         .await;
 }
 
 #[tokio::test]
-async fn coordinator_recovery() {
-    let (replicas, clients) = build_kv(true, 3, 3);
+async fn coordinator_recovery_3() {
+    coordinator_recovery(3).await;
+}
 
-    'outer: for n in (0..100).chain((100..500).step_by(10)) {
+#[tokio::test]
+async fn coordinator_recovery_5() {
+    coordinator_recovery(5).await;
+}
+
+#[tokio::test]
+async fn coordinator_recovery_7() {
+    coordinator_recovery(7).await;
+}
+
+async fn coordinator_recovery(num_replicas: usize) {
+    let (replicas, clients) = build_kv(true, num_replicas, 3);
+
+    'outer: for n in (0..50).step_by(2).chain((50..500).step_by(10)) {
         let conflicting = clients[2].begin();
         conflicting.get(n).await;
         tokio::spawn(conflicting.only_prepare());

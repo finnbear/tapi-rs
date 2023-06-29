@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
     IrMessage, IrOpId, IrRecord, IrRecordConsensusEntry, IrReplica, IrReplicaIndex,
@@ -12,19 +11,29 @@ use std::{
 };
 
 #[tokio::test]
-async fn test_lock_server() {
+async fn lock_server_3() {
     lock_server(3).await;
+}
 
-    /*
-    for _ in 0..10 {
-        for r in (3..=5).step_by(2) {
-            lock_server(r).await;
-        }
-    }
-    */
+
+#[tokio::test]
+async fn lock_server_5() {
+    lock_server(5).await;
+}
+
+#[tokio::test]
+async fn lock_server_7() {
+    lock_server(7).await;
+}
+
+#[tokio::test]
+async fn lock_server_9() {
+    lock_server(9).await;
 }
 
 async fn lock_server(num_replicas: usize) {
+    println!("testing lock server with {num_replicas} replicas");
+
     #[derive(Debug, Clone, Eq, PartialEq)]
     struct Lock(IrClientId);
 
@@ -187,8 +196,8 @@ async fn lock_server(num_replicas: usize) {
         .invoke_inconsistent(Unlock(clients[0].id()))
         .await;
 
-    for i in 0..5 {
-        ChannelTransport::<Message>::sleep(Duration::from_secs(8)).await;
+    for i in 0..10 {
+        ChannelTransport::<Message>::sleep(Duration::from_secs(5)).await;
 
         eprintln!("@@@@@ INVOKE {replicas:?}");
         if clients[1]
