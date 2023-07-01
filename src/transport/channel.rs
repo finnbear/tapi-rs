@@ -71,7 +71,7 @@ impl<M> Clone for Channel<M> {
 impl<M: Message> Channel<M> {
     fn should_drop(from: usize, to: usize) -> bool {
         //return false;
-        return (from == 1) ^ (to == 1);
+        //return (from == 1) ^ (to == 1);
 
         use rand::Rng;
         rand::thread_rng().gen_bool(1.0 / 5.0)

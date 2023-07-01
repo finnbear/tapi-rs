@@ -8,7 +8,7 @@ use crate::{
     util::{join, Join, Until},
     Transport,
 };
-use futures::pin_mut;
+use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -25,6 +25,7 @@ use std::{
     task::Context,
     time::Duration,
 };
+use tokio::select;
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct Id(pub u64);
@@ -122,23 +123,47 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
         }
     }
 
-    /// Unlogged request against a single replica.
-    pub fn invoke_unlogged(&self, index: ReplicaIndex, op: U::UO) -> impl Future<Output = U::UR> {
+    /// Unlogged request against any single replica.
+    pub fn invoke_unlogged(&self, op: U::UO) -> impl Future<Output = U::UR> {
         let inner = Arc::clone(&self.inner);
-        let address = {
+        let (index, count) = {
             let sync = inner.sync.lock().unwrap();
-            sync.membership.get(index).unwrap()
+            let count = sync.membership.len();
+            (thread_rng().gen_range(0..count), count)
         };
 
-        let future = inner
-            .transport
-            .send::<ReplyUnlogged<U::UR>>(address, RequestUnlogged { op });
-
         async move {
-            let response = future.await;
-            let mut sync = inner.sync.lock().unwrap();
-            sync.recent = sync.recent.max(response.view_number);
-            response.result
+            let mut futures = FuturesUnordered::new();
+
+            loop {
+                debug_assert!(futures.len() < count);
+                {
+                    let sync = inner.sync.lock().unwrap();
+                    let address = sync
+                        .membership
+                        .get(ReplicaIndex((index + futures.len()) % count))
+                        .unwrap();
+                    drop(sync);
+                    let future = inner
+                        .transport
+                        .send::<ReplyUnlogged<U::UR>>(address, RequestUnlogged { op: op.clone() });
+                    futures.push(future);
+                }
+
+                let mut timeout = std::pin::pin!(T::sleep(Duration::from_millis(250)));
+
+                let response = select! {
+                    _ = timeout, if futures.len() < count => {
+                        continue;
+                    }
+                    response = futures.next() => {
+                        response.unwrap()
+                    }
+                };
+                let mut sync = inner.sync.lock().unwrap();
+                sync.recent = sync.recent.max(response.view_number);
+                return response.result;
+            }
         }
     }
 

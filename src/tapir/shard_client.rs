@@ -103,13 +103,10 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
                 }
 
                 use rand::Rng;
-                let future = client.invoke_unlogged(
-                    IrReplicaIndex(rand::thread_rng().gen_range(0..3)),
-                    UO::Get {
-                        key: key.clone(),
-                        timestamp: None,
-                    },
-                );
+                let future = client.invoke_unlogged(UO::Get {
+                    key: key.clone(),
+                    timestamp: None,
+                });
 
                 let reply = future.await;
 
