@@ -288,7 +288,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
             Message::<U>::ProposeInconsistent(ProposeInconsistent { op_id, op, recent }) => {
                 if sync.status.is_normal() {
                     if !recent.is_recent_relative_to(sync.view.number) {
-                        // eprintln!("ancient relative to {:?}", sync.view.number);
+                        eprintln!("ancient relative to {:?}", sync.view.number);
                         return Some(Message::<U>::ReplyInconsistent(ReplyInconsistent {
                             op_id,
                             view_number: sync.view.number,
@@ -319,7 +319,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
             Message::<U>::ProposeConsensus(ProposeConsensus { op_id, op, recent }) => {
                 if sync.status.is_normal() {
                     if !recent.is_recent_relative_to(sync.view.number) {
-                        // eprintln!("ancient relative to {:?}", sync.view.number);
+                        eprintln!("ancient relative to {:?}", sync.view.number);
                         return Some(Message::<U>::ReplyConsensus(ReplyConsensus {
                             op_id,
                             view_number: sync.view.number,
@@ -348,7 +348,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                         result_state: Some((result, state)),
                     }));
                 } else {
-                    //println!("{:?} abnormal", self.index);
+                    eprintln!("{:?} abnormal", self.index);
                 }
             }
             Message::<U>::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
@@ -448,7 +448,20 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                                 if sync.latest_normal_view == latest_normal_view {
                                     latest_records.push(sync.record.clone());
                                 }
-                                eprintln!("have {} latest ({:?})", latest_records.len(), sync.outstanding_do_view_changes.iter().map(|(i, dvt)| (i, dvt.view_number, dvt.addendum.as_ref().unwrap().latest_normal_view)).collect::<Vec<_>>());
+                                eprintln!(
+                                    "have {} latest ({:?})",
+                                    latest_records.len(),
+                                    sync
+                                        .outstanding_do_view_changes
+                                        .iter()
+                                        .map(|(i, dvt)| (*i, dvt.view_number, dvt.addendum.as_ref().unwrap().latest_normal_view))
+                                        .chain(
+                                            std::iter::once(
+                                                (self.index, sync.view.number, sync.latest_normal_view)
+                                            )
+                                        )
+                                        .collect::<Vec<_>>()
+                                );
 
                                 #[allow(non_snake_case)]
                                 let mut R = Record::<U>::default();

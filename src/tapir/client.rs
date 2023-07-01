@@ -77,7 +77,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
                     let new_time =  inner.client.transport().time().max(proposed.saturating_add(1)).max(min_commit_timestamp);
                     if new_time != timestamp.time {
                         timestamp.time = new_time;
-                        continue;
+                        // TODO continue;
                     }
                 }
                 if matches!(result, OccPrepareResult::TooLate | OccPrepareResult::TooOld) {
@@ -122,7 +122,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transac
                         unreachable!();
                     }
                     result = inner => {
-                        return result;
+                        result
                     }
                 }
             } else {

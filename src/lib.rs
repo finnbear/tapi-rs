@@ -4,6 +4,7 @@
 #![feature(let_chains)]
 #![feature(btree_cursors)]
 #![allow(unused)]
+#![allow(clippy::type_complexity)]
 
 mod ir;
 mod mvcc;

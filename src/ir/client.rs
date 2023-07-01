@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     ir::{membership, Confirm, FinalizeConsensus, Replica, ReplyConsensus, ReplyInconsistent},
-    util::join,
+    util::{join, Join, Until},
     Transport,
 };
 use futures::pin_mut;
@@ -122,6 +122,7 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
         }
     }
 
+    /// Unlogged request against a single replica.
     pub fn invoke_unlogged(&self, index: ReplicaIndex, op: U::UO) -> impl Future<Output = U::UR> {
         let inner = Arc::clone(&self.inner);
         let address = {
@@ -131,7 +132,7 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
 
         let future = inner
             .transport
-            .send::<ReplyUnlogged<U::UR>>(address, RequestUnlogged { op: op.clone() });
+            .send::<ReplyUnlogged<U::UR>>(address, RequestUnlogged { op });
 
         async move {
             let response = future.await;
@@ -139,6 +140,29 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
             sync.recent = sync.recent.max(response.view_number);
             response.result
         }
+    }
+
+    /// A consenSUS operation; can get a quorum but doesn't preserve decisions.
+    pub fn invoke_unlogged_joined(
+        &self,
+        op: U::UO,
+    ) -> (
+        Join<ReplicaIndex, impl Future<Output = ReplyUnlogged<U::UR>>>,
+        MembershipSize,
+    ) {
+        let sync = self.inner.sync.lock().unwrap();
+        let membership_size = sync.membership.size();
+
+        let future = join(sync.membership.iter().map(|(index, address)| {
+            (
+                index,
+                self.inner
+                    .transport
+                    .send::<ReplyUnlogged<U::UR>>(address, RequestUnlogged { op: op.clone() }),
+            )
+        }));
+
+        (future, membership_size)
     }
 
     pub fn invoke_inconsistent(&self, op: U::IO) -> impl Future<Output = ()> {

@@ -84,7 +84,7 @@ impl Display for IdEnum {
 impl FromStr for IdEnum {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(if let Some(n) = s.strip_prefix("n") {
+        Ok(if let Some(n) = s.strip_prefix('n') {
             let n = usize::from_str(n).map_err(|_| ())? - 1;
             if n < 3 {
                 Self::Replica(n)
@@ -92,7 +92,7 @@ impl FromStr for IdEnum {
                 Self::App(n - 3)
             }
         } else {
-            let n = s.strip_prefix("c").ok_or(())?;
+            let n = s.strip_prefix('c').ok_or(())?;
             let n = usize::from_str(n).map_err(|_| ())? - 1;
             Self::Client(n)
         })
@@ -134,7 +134,7 @@ impl Transport for Maelstrom {
         address: Self::Address,
         message: impl Into<Self::Message> + std::fmt::Debug,
     ) -> impl futures::Future<Output = R> + Send + 'static {
-        let id = self.id.clone();
+        let id = self.id;
         let (sender, mut receiver) = tokio::sync::oneshot::channel();
         let reply = thread_rng().gen();
         self.inner.requests.lock().unwrap().insert(reply, sender);
@@ -202,7 +202,7 @@ impl Process<LinKv, Wrapper> for KvNode {
         _ids: Vec<Id>,
         start_msg_id: MsgId,
     ) {
-        let ids = (0..3).map(|n| IdEnum::Replica(n)).collect::<Vec<_>>();
+        let ids = (0..3).map(IdEnum::Replica).collect::<Vec<_>>();
         let membership = IrMembership::new(ids);
         let id = IdEnum::from_str(&id).unwrap();
         let transport = Maelstrom {
@@ -260,34 +260,27 @@ impl Process<LinKv, Wrapper> for KvNode {
                                     } else {
                                         eprintln!("duplicate reply");
                                     }
-                                } else {
-                                    if let KvNodeInner::Replica(replica) = &inner {
-                                        if let Some(response) = replica
-                                            .receive(src.parse::<IdEnum>().unwrap(), app.message)
-                                        {
-                                            let response = Msg {
-                                                src: transport.id.to_string(),
-                                                dest: src.clone(),
-                                                body: Body::Application(Wrapper {
-                                                    message: response,
-                                                    do_reply_to: None,
-                                                    is_reply_to: app.do_reply_to,
-                                                }),
-                                            };
-                                            eprintln!("sending response {response:?}");
-                                            let _ = transport
-                                                .inner
-                                                .net
-                                                .txq
-                                                .send(response)
-                                                .await
-                                                .unwrap();
-                                        } else {
-                                            eprintln!("NO RESPONSE");
-                                        }
+                                } else if let KvNodeInner::Replica(replica) = &inner {
+                                    if let Some(response) =
+                                        replica.receive(src.parse::<IdEnum>().unwrap(), app.message)
+                                    {
+                                        let response = Msg {
+                                            src: transport.id.to_string(),
+                                            dest: src.clone(),
+                                            body: Body::Application(Wrapper {
+                                                message: response,
+                                                do_reply_to: None,
+                                                is_reply_to: app.do_reply_to,
+                                            }),
+                                        };
+                                        eprintln!("sending response {response:?}");
+                                        let _ =
+                                            transport.inner.net.txq.send(response).await.unwrap();
                                     } else {
-                                        eprintln!("(was unsolicited)");
-                                    };
+                                        eprintln!("NO RESPONSE");
+                                    }
+                                } else {
+                                    eprintln!("(was unsolicited)");
                                 }
                             }
                             Body::Workload(work) => {

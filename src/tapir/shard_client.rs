@@ -87,8 +87,38 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
         let inner = Arc::clone(&self.inner);
 
         async move {
-            {
-                let lock = inner.lock().unwrap();
+            loop {
+                {
+                    let lock = inner.lock().unwrap();
+
+                    // Read own writes.
+                    if let Some(write) = lock.inner.write_set.get(&key) {
+                        return write.as_ref().cloned();
+                    }
+
+                    // Consistent reads.
+                    if let Some(read) = lock.read_cache.get(&key) {
+                        return read.as_ref().cloned();
+                    }
+                }
+
+                use rand::Rng;
+                let future = client.invoke_unlogged(
+                    IrReplicaIndex(rand::thread_rng().gen_range(0..3)),
+                    UO::Get {
+                        key: key.clone(),
+                        timestamp: None,
+                    },
+                );
+
+                let reply = future.await;
+
+                let UR::Get(value, timestamp) = reply else {
+                    debug_assert!(false);
+                    continue;
+                };
+
+                let mut lock = inner.lock().unwrap();
 
                 // Read own writes.
                 if let Some(write) = lock.inner.write_set.get(&key) {
@@ -99,36 +129,11 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
                 if let Some(read) = lock.read_cache.get(&key) {
                     return read.as_ref().cloned();
                 }
+
+                lock.read_cache.insert(key.clone(), value.clone());
+                lock.inner.add_read(key, timestamp);
+                return value;
             }
-
-            use rand::Rng;
-            let future = client.invoke_unlogged(
-                IrReplicaIndex(rand::thread_rng().gen_range(0..3)),
-                UO::Get {
-                    key: key.clone(),
-                    timestamp: None,
-                },
-            );
-
-            let reply = future.await;
-
-            let UR::Get(value, timestamp) = reply;
-
-            let mut lock = inner.lock().unwrap();
-
-            // Read own writes.
-            if let Some(write) = lock.inner.write_set.get(&key) {
-                return write.as_ref().cloned();
-            }
-
-            // Consistent reads.
-            if let Some(read) = lock.read_cache.get(&key) {
-                return read.as_ref().cloned();
-            }
-
-            lock.read_cache.insert(key.clone(), value.clone());
-            lock.inner.add_read(key, timestamp);
-            value
         }
     }
 
@@ -147,7 +152,6 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
                 transaction_id: lock.id,
                 transaction: lock.inner.clone(),
                 commit: timestamp,
-                backup: false,
             },
             |results, membership_size| {
                 let mut ok_count = 0;

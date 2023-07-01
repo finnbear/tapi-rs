@@ -1,10 +1,12 @@
 use super::{Key, Timestamp, Value, CO, CR, IO, UO, UR};
+use crate::ir::ReplyUnlogged;
 use crate::util::vectorize;
 use crate::{
-    IrClient, IrMembership, IrMessage, IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult,
-    OccStore, OccTransaction, OccTransactionId, Transport,
+    IrClient, IrMembership, IrMembershipSize, IrMessage, IrOpId, IrRecord, IrReplicaIndex,
+    IrReplicaUpcalls, OccPrepareResult, OccStore, OccTransaction, OccTransactionId, Transport,
 };
 use serde::{Deserialize, Serialize};
+use std::task::Context;
 use std::{collections::HashMap, fmt::Debug, future::Future, hash::Hash};
 
 /// Diverge from TAPIR and don't maintain a no-vote list. Instead, wait for a
@@ -107,46 +109,59 @@ impl<K: Key, V: Value> Replica<K, V> {
                 return;
             }
 
-            let result = client
-                .invoke_consensus(
-                    CO::Prepare {
-                        transaction_id,
-                        transaction: transaction.clone(),
-                        commit,
-                        backup: true,
+            fn decide<V>(
+                results: &HashMap<IrReplicaIndex, ReplyUnlogged<UR<V>>>,
+                membership: IrMembershipSize,
+            ) -> Option<OccPrepareResult<Timestamp>> {
+                let highest_view = results.values().map(|r| r.view_number).max()?;
+                Some(
+                    if results
+                        .values()
+                        .any(|r| matches!(r.result, UR::CheckPrepare(OccPrepareResult::Fail)))
+                    {
+                        OccPrepareResult::Fail
+                    } else if results
+                        .values()
+                        .filter(|r| {
+                            r.view_number == highest_view
+                                && matches!(r.result, UR::CheckPrepare(OccPrepareResult::Ok))
+                        })
+                        .count()
+                        >= membership.f_plus_one()
+                    {
+                        OccPrepareResult::Ok
+                    } else if results
+                        .values()
+                        .filter(|r| {
+                            r.view_number == highest_view
+                                && matches!(r.result, UR::CheckPrepare(OccPrepareResult::TooLate))
+                        })
+                        .count()
+                        >= membership.f_plus_one()
+                    {
+                        // TODO: Check views too.
+                        OccPrepareResult::TooLate
+                    } else {
+                        return None;
                     },
-                    |results, membership| {
-                        let decision = if results.contains_key(&CR::Prepare(OccPrepareResult::Fail)) {
-                            OccPrepareResult::Fail
-                        } else if results
-                            .get(&CR::Prepare(OccPrepareResult::TooLate))
-                            .copied()
-                            .unwrap_or_default()
-                            >= membership.f_plus_one()
-                        {
-                            OccPrepareResult::TooLate
-                        } else if results
-                            .get(&CR::Prepare(OccPrepareResult::Ok))
-                            .copied()
-                            .unwrap_or_default()
-                            >= membership.f_plus_one()
-                        {
-                            OccPrepareResult::Ok
-                        } else {
-                            OccPrepareResult::Retry {
-                                proposed: commit.time,
-                            }
-                        };
-                        eprintln!(
-                            "backup coordinator deciding on {results:?} -> {decision:?} for {transaction_id:?}"
-                        );
-                        CR::Prepare(decision)
+                )
+            }
+
+            let (future, membership) = client.invoke_unlogged_joined(UO::CheckPrepare {
+                transaction_id,
+                commit,
+            });
+
+            let results = future
+                .until(
+                    |results: &HashMap<IrReplicaIndex, ReplyUnlogged<UR<V>>>,
+                     cx: &mut Context<'_>| {
+                        decide(results, membership).is_some()
                     },
                 )
                 .await;
 
-            let CR::Prepare(result) = result else {
-                debug_assert!(false);
+            let Some(result) = decide(&results, membership) else {
                 return;
             };
 
@@ -194,6 +209,52 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 };
                 UR::Get(v.cloned(), ts)
             }
+            UO::CheckPrepare {
+                transaction_id,
+                commit,
+            } => {
+                UR::CheckPrepare(if commit.time < self.gc_watermark {
+                    // In theory, could check the other conditions first, but
+                    // that might hide bugs.
+                    OccPrepareResult::TooOld
+                } else if let Some((ts, c)) = self.transaction_log.get(&transaction_id) {
+                    if *c && *ts == commit {
+                        // Already committed at this timestamp.
+                        OccPrepareResult::Ok
+                    } else {
+                        // Didn't (and will never) commit at this timestamp.
+                        OccPrepareResult::Fail
+                    }
+                } else if let Some(f) = self
+                    .inner
+                    .prepared
+                    .get(&transaction_id)
+                    .filter(|(ts, _, f)| *ts == commit)
+                    .map(|(_, _, f)| *f)
+                {
+                    // Already prepared at this timestamp.
+                    if f {
+                        // Prepare was finalized.
+                        OccPrepareResult::Ok
+                    } else {
+                        // Prepare wasn't finalized, can't be sure yet.
+                        OccPrepareResult::Abstain
+                    }
+                } else if commit.time < self.min_prepare_time
+                    || self
+                        .inner
+                        .prepared
+                        .get(&transaction_id)
+                        .map(|(c, _, _)| c.time < self.min_prepare_time)
+                        .unwrap_or(false)
+                {
+                    // Too late for the client to prepare.
+                    OccPrepareResult::TooLate
+                } else {
+                    /// Not sure.
+                    OccPrepareResult::Abstain
+                })
+            }
         }
     }
 
@@ -222,6 +283,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transaction,
                 commit,
             } => {
+                #[allow(clippy::blocks_in_if_conditions)]
                 if commit
                     .map(|commit| {
                         debug_assert!(
@@ -265,7 +327,6 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transaction_id,
                 transaction,
                 commit,
-                backup,
             } => CR::Prepare(if commit.time < self.gc_watermark {
                 // In theory, could check the other conditions first, but
                 // that might hide bugs.
@@ -275,9 +336,6 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     if ts == commit {
                         // Already committed at this timestamp.
                         OccPrepareResult::Ok
-                    } else if *backup {
-                        // Didn't (and will never) commit at this timestamp.
-                        OccPrepareResult::Fail
                     } else {
                         // Committed at a different timestamp.
                         OccPrepareResult::Retry { proposed: ts.time }
@@ -286,23 +344,15 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     // Already aborted by client.
                     OccPrepareResult::Fail
                 }
-            } else if let Some(f) = self
+            } else if self
                 .inner
                 .prepared
                 .get(transaction_id)
-                .filter(|(ts, _, _)| *ts == *commit)
-                .map(|(_, _, f)| *f)
+                .map(|(ts, _, _)| *ts == *commit)
+                .unwrap_or(false)
             {
                 // Already prepared at this timestamp.
-                if f || !*backup {
-                    OccPrepareResult::Ok
-                } else {
-                    // Backup coordinator needs to wait to finalized results,
-                    // which won't simply evaporate on a view change.
-                    OccPrepareResult::Retry {
-                        proposed: commit.time,
-                    }
-                }
+                OccPrepareResult::Ok
             } else if commit.time < self.min_prepare_time
                 || self
                     .inner
@@ -315,7 +365,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 OccPrepareResult::TooLate
             } else {
                 self.inner
-                    .prepare(*transaction_id, transaction.clone(), *commit, *backup)
+                    .prepare(*transaction_id, transaction.clone(), *commit, false)
             }),
             CO::RaiseMinPrepareTime { time } => {
                 // Want to avoid tentative prepare operations materializing later on...
@@ -343,12 +393,10 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transaction_id,
                 transaction,
                 commit,
-                backup,
             } => {
-                if !*backup && matches!(res, CR::Prepare(OccPrepareResult::Ok)) && let Some((ts, _, finalized)) = self.inner.prepared.get_mut(transaction_id) {
-                    if *commit == *ts {
-                        *finalized = true;
-                    }
+                if matches!(res, CR::Prepare(OccPrepareResult::Ok)) && let Some((ts, _, finalized)) = self.inner.prepared.get_mut(transaction_id) && *commit == *ts {
+                    println!("confirming prepare {transaction_id:?} at {commit:?}");
+                    *finalized = true;
                 }
             }
             CO::RaiseMinPrepareTime { time } => {
@@ -375,45 +423,42 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     transaction_id,
                     transaction,
                     commit,
-                    backup,
                 } => {
                     // Backup coordinator prepares don't change state.
-                    if !*backup {
-                        if matches!(entry.result, CR::Prepare(OccPrepareResult::Ok)) {
-                            if self
-                                .inner
-                                .prepared
-                                .get(transaction_id)
-                                .map(|(ts, _, _)| ts == commit)
-                                .unwrap_or(true)
-                                && !self.transaction_log.contains_key(transaction_id)
-                            {
-                                // Enough other replicas agreed to prepare
-                                // the transaction so it must be okay.
-                                //
-                                // Finalize it immediately since we are syncing
-                                // from the leader's record.
-                                eprintln!("syncing successful {op_id:?} prepare for {transaction_id:?} at {commit:?}");
-                                self.inner.add_prepared(
-                                    *transaction_id,
-                                    transaction.clone(),
-                                    *commit,
-                                    true,
-                                );
-                            }
-                        } else if self
+                    if matches!(entry.result, CR::Prepare(OccPrepareResult::Ok)) {
+                        if self
                             .inner
                             .prepared
                             .get(transaction_id)
                             .map(|(ts, _, _)| ts == commit)
-                            .unwrap_or(false)
+                            .unwrap_or(true)
+                            && !self.transaction_log.contains_key(transaction_id)
                         {
-                            eprintln!(
-                                "syncing {:?} {op_id:?} prepare for {transaction_id:?} at {commit:?}",
-                                entry.result
+                            // Enough other replicas agreed to prepare
+                            // the transaction so it must be okay.
+                            //
+                            // Finalize it immediately since we are syncing
+                            // from the leader's record.
+                            eprintln!("syncing successful {op_id:?} prepare for {transaction_id:?} at {commit:?} (had {:?})", self.inner.prepared.get(transaction_id));
+                            self.inner.add_prepared(
+                                *transaction_id,
+                                transaction.clone(),
+                                *commit,
+                                true,
                             );
-                            self.inner.remove_prepared(*transaction_id);
                         }
+                    } else if self
+                        .inner
+                        .prepared
+                        .get(transaction_id)
+                        .map(|(ts, _, _)| ts == commit)
+                        .unwrap_or(false)
+                    {
+                        eprintln!(
+                            "syncing {:?} {op_id:?} prepare for {transaction_id:?} at {commit:?}",
+                            entry.result
+                        );
+                        self.inner.remove_prepared(*transaction_id);
                     }
                 }
                 CO::RaiseMinPrepareTime { .. } => {
@@ -474,7 +519,6 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     transaction_id,
                     transaction,
                     commit,
-                    backup,
                 } => {
                     let result = if matches!(reply, CR::Prepare(OccPrepareResult::Ok)) {
                         // Possibly successful fast quorum.
@@ -539,11 +583,12 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
             self.inner.prepared.len()
         );
         let threshold: u64 = transport.time_offset(-500);
-        let mut governor = 2u8;
-        for (transaction_id, (commit, transaction, _)) in &self.inner.prepared {
+        if let Some((transaction_id, (commit, transaction, _))) =
+            self.inner.prepared.iter().min_by_key(|(_, (c, _, _))| *c)
+        {
             if commit.time > threshold {
                 // Allow the client to finish on its own.
-                continue;
+                return;
             }
             let future = Self::recover_coordination(
                 *transaction_id,
@@ -553,12 +598,6 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 transport.clone(),
             );
             tokio::spawn(future);
-
-            if let Some(new_governor) = governor.checked_sub(1) {
-                governor = new_governor;
-            } else {
-                break;
-            }
         }
     }
 }

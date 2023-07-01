@@ -12,11 +12,21 @@ pub enum UO<K> {
         /// Get a different version instead (not part of normal TAPIR).
         timestamp: Option<Timestamp>,
     },
+    /// For backup coordinators.
+    CheckPrepare {
+        /// Id of transaction to check the preparedness of.
+        transaction_id: OccTransactionId,
+        /// Same as (any) known prepared timestamp.
+        commit: Timestamp,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UR<V> {
+    /// To clients.
     Get(Option<V>, Timestamp),
+    /// To backup coordinators.
+    CheckPrepare(OccPrepareResult<Timestamp>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,9 +106,6 @@ pub enum CO<K, V> {
         transaction: OccTransaction<K, V, Timestamp>,
         /// Proposed commit timestamp.
         commit: Timestamp,
-        /// `true` when sent by backup coordinator(s), in which case the prepare
-        /// action is skipped.
-        backup: bool,
     },
     RaiseMinPrepareTime {
         time: u64,
@@ -113,19 +120,16 @@ impl<K: Eq + Hash, V: PartialEq> PartialEq for CO<K, V> {
                     transaction_id,
                     transaction,
                     commit,
-                    backup,
                 },
                 Self::Prepare {
                     transaction_id: other_transaction_id,
                     transaction: other_transaction,
                     commit: other_commit,
-                    backup: other_backup,
                 },
             ) => {
                 transaction_id == other_transaction_id
                     && transaction == other_transaction
                     && commit == other_commit
-                    && backup == other_backup
             }
             (
                 Self::RaiseMinPrepareTime { time },

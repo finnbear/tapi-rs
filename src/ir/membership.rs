@@ -36,6 +36,7 @@ impl<T: Transport> Membership<T> {
         Size((self.members.len() - 1) / 2)
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.members.len()
     }

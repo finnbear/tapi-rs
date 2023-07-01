@@ -287,6 +287,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
         commit: TS,
         finalized: bool,
     ) {
+        eprintln!("preparing {id:?} at {commit:?} (fin = {finalized})");
         match self.prepared.entry(id) {
             Entry::Vacant(mut vacant) => {
                 vacant.insert((commit, transaction.clone(), finalized));
@@ -300,7 +301,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
                     let old_commit = occupied.get().0;
                     occupied.insert((commit, transaction.clone(), finalized));
                     self.remove_prepared_inner(id, transaction.clone(), old_commit);
-                    self.add_prepared_inner(id, transaction.clone(), commit);
+                    self.add_prepared_inner(id, transaction, commit);
                 }
             }
         }
@@ -327,7 +328,8 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
     }
 
     pub fn remove_prepared(&mut self, id: TransactionId) -> bool {
-        if let Some((commit, transaction, _)) = self.prepared.remove(&id) {
+        if let Some((commit, transaction, finalized)) = self.prepared.remove(&id) {
+            eprintln!("removing prepared {id:?} at {commit:?} (fin = {finalized})");
             self.remove_prepared_inner(id, transaction, commit);
             true
         } else {

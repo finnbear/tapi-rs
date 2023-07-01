@@ -275,23 +275,45 @@ async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize)
         .await;
 }
 
+#[ignore]
 #[tokio::test]
-async fn coordinator_recovery_3() {
+async fn coordinator_recovery_3_loop() {
     loop {
-        coordinator_recovery(3).await;
+        timeout(Duration::from_secs(120), coordinator_recovery(3))
+            .await
+            .unwrap();
     }
 }
 
 #[tokio::test]
+async fn coordinator_recovery_3() {
+    timeout(Duration::from_secs(120), coordinator_recovery(3))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn coordinator_recovery_5() {
+    timeout(Duration::from_secs(180), coordinator_recovery(5))
+        .await
+        .unwrap();
+}
+
+#[ignore]
+#[tokio::test]
+async fn coordinator_recovery_7_loop() {
     loop {
-        coordinator_recovery(5).await;
+        timeout(Duration::from_secs(240), coordinator_recovery(7))
+            .await
+            .unwrap();
     }
 }
 
 #[tokio::test]
 async fn coordinator_recovery_7() {
-    coordinator_recovery(7).await;
+    timeout(Duration::from_secs(240), coordinator_recovery(7))
+        .await
+        .unwrap();
 }
 
 async fn coordinator_recovery(num_replicas: usize) {
