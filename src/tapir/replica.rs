@@ -395,7 +395,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 commit,
             } => {
                 if matches!(res, CR::Prepare(OccPrepareResult::Ok)) && let Some((ts, _, finalized)) = self.inner.prepared.get_mut(transaction_id) && *commit == *ts {
-                    println!("confirming prepare {transaction_id:?} at {commit:?}");
+                    eprintln!("confirming prepare {transaction_id:?} at {commit:?}");
                     *finalized = true;
                 }
             }

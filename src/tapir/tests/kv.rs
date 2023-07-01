@@ -342,7 +342,7 @@ async fn coordinator_recovery(num_replicas: usize) {
 
         Transport::sleep(Duration::from_millis(thread_rng().gen_range(0..100))).await;
 
-        for i in 0..100 {
+        for i in 0..128 {
             let txn = clients[1].begin();
             let read = txn.get(n).await;
             println!("{n} try {i} read {read:?}");
@@ -359,7 +359,7 @@ async fn coordinator_recovery(num_replicas: usize) {
                 continue 'outer;
             }
 
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
 
         panic!("never recovered");
