@@ -1,5 +1,5 @@
 use super::{
-    record::RecordImpl, OpId, Record, RecordEntryState, ReplicaIndex, ReplicaUpcalls, ViewNumber,
+    record::RecordImpl, OpId, RecordEntryState, ReplicaIndex, ReplicaUpcalls, ViewNumber,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;

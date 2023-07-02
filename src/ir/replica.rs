@@ -1,8 +1,8 @@
 use super::{
-    message::ViewChangeAddendum, record::Consistency, Confirm, DoViewChange, FinalizeConsensus,
-    FinalizeInconsistent, Membership, Message, OpId, ProposeConsensus, ProposeInconsistent, Record,
-    RecordConsensusEntry, RecordEntryState, RecordInconsistentEntry, ReplyConsensus,
-    ReplyInconsistent, ReplyUnlogged, RequestUnlogged, StartView, View, ViewNumber,
+    message::ViewChangeAddendum, Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent,
+    Membership, Message, OpId, ProposeConsensus, ProposeInconsistent, Record, RecordConsensusEntry,
+    RecordEntryState, RecordInconsistentEntry, ReplyConsensus, ReplyInconsistent, ReplyUnlogged,
+    RequestUnlogged, StartView, View, ViewNumber,
 };
 use crate::{Transport, TransportMessage};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -10,7 +10,7 @@ use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
-    sync::{Arc, Mutex, MutexGuard, Weak},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -77,6 +77,7 @@ pub trait Upcalls: Sized + Send + Serialize + DeserializeOwned + 'static {
         membership: &Membership<T>,
         transport: &T,
     ) {
+        let _ = (membership, transport);
         // No-op.
     }
 }
@@ -283,6 +284,8 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                         result,
                         view_number: sync.view.number,
                     }));
+                } else {
+                    eprintln!("{:?} abnormal", self.index);
                 }
             }
             Message::<U>::ProposeInconsistent(ProposeInconsistent { op_id, op, recent }) => {
@@ -565,7 +568,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                                 debug_assert_eq!(results_by_opid.len(), entries_by_opid.len());
 
                                 for (op_id, result) in results_by_opid {
-                                    let mut entries = entries_by_opid.get(&op_id).unwrap();
+                                    let entries = entries_by_opid.get(&op_id).unwrap();
                                     let entry = &entries[0];
                                     sync.upcalls.finalize_consensus(&entry.op, &result);
                                     R.consensus.insert(

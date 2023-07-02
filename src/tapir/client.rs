@@ -2,26 +2,22 @@ use super::{Key, Replica, ShardClient, ShardTransaction, Timestamp, Value};
 use crate::{IrMembership, IrMessage, OccPrepareResult, OccTransactionId, Transport};
 use rand::{thread_rng, Rng};
 use std::{
-    collections::HashMap,
-    fmt::Debug,
     future::Future,
-    hash::Hash,
     sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, SystemTime},
+    time::Duration,
 };
-use tokio::{
-    select,
-    time::{timeout, Sleep, Timeout},
-};
+use tokio::select;
 
 pub struct Client<K: Key, V: Value, T: Transport> {
     /// TODO: Add multiple shards.
     inner: ShardClient<K, V, T>,
+    #[allow(unused)]
     transport: T,
     next_transaction_number: AtomicU64,
 }
 
 pub struct Transaction<K: Key, V: Value, T: Transport> {
+    #[allow(unused)]
     id: OccTransactionId,
     // TODO: Multiple shards.
     inner: ShardTransaction<K, V, T>,

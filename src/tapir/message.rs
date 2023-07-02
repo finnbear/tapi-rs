@@ -1,4 +1,4 @@
-use super::{Key, Timestamp, Value};
+use super::Timestamp;
 use crate::{OccPrepareResult, OccTransaction, OccTransactionId};
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
@@ -35,6 +35,7 @@ pub enum IO<K, V> {
     Commit {
         transaction_id: OccTransactionId,
         /// Same as successfully prepared transaction.
+        #[serde(bound(deserialize = "K: Eq + Deserialize<'de> + Hash, V: Deserialize<'de>"))]
         transaction: OccTransaction<K, V, Timestamp>,
         /// Same as successfully prepared commit timestamp.
         commit: Timestamp,
@@ -45,9 +46,6 @@ pub enum IO<K, V> {
     /// that of a successful `Commit`.
     Abort {
         transaction_id: OccTransactionId,
-        /// Same as unsuccessfully prepared transaction.
-        #[serde(bound(deserialize = "K: Eq + Deserialize<'de> + Hash, V: Deserialize<'de>"))]
-        transaction: OccTransaction<K, V, Timestamp>,
         /// Same as unsuccessfully prepared commit timestamp for backup coordinators or `None`
         /// used by clients to abort at every timestamp.
         commit: Option<Timestamp>,
@@ -76,19 +74,13 @@ impl<K: Eq + Hash, V: PartialEq> PartialEq for IO<K, V> {
             (
                 Self::Abort {
                     transaction_id,
-                    transaction,
                     commit,
                 },
                 Self::Abort {
                     transaction_id: other_transaction_id,
-                    transaction: other_transaction,
                     commit: other_commit,
                 },
-            ) => {
-                transaction_id == other_transaction_id
-                    && transaction == other_transaction
-                    && commit == other_commit
-            }
+            ) => transaction_id == other_transaction_id && commit == other_commit,
             _ => false,
         }
     }

@@ -3,14 +3,10 @@ use rand::{thread_rng, Rng};
 use tokio::time::timeout;
 
 use crate::{
-    ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
-    IrMessage, IrOpId, IrRecord, IrRecordConsensusEntry, IrReplica, IrReplicaIndex,
-    IrReplicaUpcalls, TapirClient, TapirReplica, TapirTimestamp, Transport as _,
+    ChannelRegistry, ChannelTransport, IrMembership, IrMessage, IrReplica, IrReplicaIndex,
+    TapirClient, TapirReplica, TapirTimestamp, Transport as _,
 };
 use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    hash::Hash,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -63,13 +59,8 @@ fn build_kv(
         registry: &ChannelRegistry<Message>,
         membership: &IrMembership<ChannelTransport<Message>>,
     ) -> Arc<TapirClient<K, V, ChannelTransport<Message>>> {
-        Arc::new_cyclic(
-            |weak: &std::sync::Weak<TapirClient<K, V, ChannelTransport<Message>>>| {
-                let weak = weak.clone();
-                let channel = registry.channel(move |from, message| unreachable!());
-                TapirClient::new(membership.clone(), channel)
-            },
-        )
+        let channel = registry.channel(move |_, _| unreachable!());
+        Arc::new(TapirClient::new(membership.clone(), channel))
     }
 
     let clients = (0..num_clients)
@@ -81,17 +72,17 @@ fn build_kv(
 
 #[tokio::test]
 async fn fuzz_rwr_3() {
-    fuzz_rwr(3);
+    fuzz_rwr(3).await;
 }
 
 #[tokio::test]
 async fn fuzz_rwr_5() {
-    fuzz_rwr(5);
+    fuzz_rwr(5).await;
 }
 
 #[tokio::test]
 async fn fuzz_rwr_7() {
-    fuzz_rwr(7);
+    fuzz_rwr(7).await;
 }
 
 async fn fuzz_rwr(replicas: usize) {
@@ -103,7 +94,7 @@ async fn fuzz_rwr(replicas: usize) {
 }
 
 async fn rwr(linearizable: bool, num_replicas: usize) {
-    let (replicas, clients) = build_kv(linearizable, num_replicas, 2);
+    let (_replicas, clients) = build_kv(linearizable, num_replicas, 2);
 
     let txn = clients[0].begin();
     assert_eq!(txn.get(0).await, None);
@@ -147,7 +138,7 @@ async fn increment_sequential_7() {
 }
 
 async fn increment_sequential(num_replicas: usize) {
-    let (replicas, clients) = build_kv(true, num_replicas, 1);
+    let (_replicas, clients) = build_kv(true, num_replicas, 1);
 
     let mut committed = 0;
     for _ in 0..10 {
@@ -178,7 +169,7 @@ async fn increment_parallel_7() {
 }
 
 async fn increment_parallel(num_replicas: usize) {
-    let (replicas, clients) = build_kv(true, num_replicas, 2);
+    let (_replicas, clients) = build_kv(true, num_replicas, 2);
 
     let add = || async {
         let txn = clients[0].begin();
@@ -217,10 +208,10 @@ async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize)
     // Run the local task set.
     local
         .run_until(async move {
-            let (replicas, clients) = build_kv(linearizable, num_replicas, num_clients);
+            let (_replicas, clients) = build_kv(linearizable, num_replicas, num_clients);
 
-            let mut attempted = Arc::new(AtomicU64::new(0));
-            let mut committed = Arc::new(AtomicU64::new(0));
+            let attempted = Arc::new(AtomicU64::new(0));
+            let committed = Arc::new(AtomicU64::new(0));
 
             for client in clients {
                 let attempted = Arc::clone(&attempted);
@@ -317,7 +308,7 @@ async fn coordinator_recovery_7() {
 }
 
 async fn coordinator_recovery(num_replicas: usize) {
-    let (replicas, clients) = build_kv(true, num_replicas, 3);
+    let (_replicas, clients) = build_kv(true, num_replicas, 3);
 
     'outer: for n in (0..50).step_by(2).chain((50..500).step_by(10)) {
         let conflicting = clients[2].begin();

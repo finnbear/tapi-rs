@@ -8,6 +8,7 @@ use super::ReplicaIndex;
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Size(usize);
 
+/// Stores the address of replica group members.
 #[derive(Clone)]
 pub struct Membership<T: Transport> {
     members: Vec<T::Address>,
@@ -22,8 +23,8 @@ impl<T: Transport> Debug for Membership<T> {
 }
 
 impl<T: Transport> Membership<T> {
+    /// Must have an odd number of replicas.
     pub fn new(members: Vec<T::Address>) -> Self {
-        assert_ne!(members.len(), 0);
         assert_eq!(members.len() % 2, 1);
         Self { members }
     }

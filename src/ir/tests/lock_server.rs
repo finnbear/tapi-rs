@@ -1,6 +1,6 @@
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
-    IrMessage, IrOpId, IrRecord, IrRecordConsensusEntry, IrReplica, IrReplicaIndex,
+    IrMessage, IrOpId, IrRecord, IrReplica, IrReplicaIndex,
     IrReplicaUpcalls, Transport,
 };
 use serde::{Deserialize, Serialize};
@@ -60,6 +60,7 @@ async fn lock_server(num_replicas: usize) {
         type CR = LockResult;
 
         fn exec_unlogged(&mut self, op: Self::UO) -> Self::UR {
+            let _ = op;
             unreachable!();
         }
         fn exec_inconsistent(&mut self, op: &Self::IO) {
@@ -80,10 +81,10 @@ async fn lock_server(num_replicas: usize) {
 
             let mut locked = HashSet::<IrClientId>::new();
             let mut unlocked = HashSet::<IrClientId>::new();
-            for (op_id, entry) in &record.inconsistent {
+            for entry in record.inconsistent.values() {
                 unlocked.insert(entry.op.0);
             }
-            for (op_id, entry) in &record.consensus {
+            for entry in record.consensus.values() {
                 if matches!(entry.result, LockResult::Ok) {
                     locked.insert(entry.op.0);
                 }
@@ -154,13 +155,8 @@ async fn lock_server(num_replicas: usize) {
         registry: &ChannelRegistry<Message>,
         membership: &IrMembership<ChannelTransport<Message>>,
     ) -> Arc<IrClient<Upcalls, ChannelTransport<Message>>> {
-        Arc::new_cyclic(
-            |weak: &std::sync::Weak<IrClient<Upcalls, ChannelTransport<Message>>>| {
-                let weak = weak.clone();
-                let channel = registry.channel(move |_, _| unreachable!());
-                IrClient::new(membership.clone(), channel)
-            },
-        )
+        let channel = registry.channel(move |_, _| unreachable!());
+        Arc::new(IrClient::new(membership.clone(), channel))
     }
 
     let clients = (0..2)
@@ -195,7 +191,7 @@ async fn lock_server(num_replicas: usize) {
         .invoke_inconsistent(Unlock(clients[0].id()))
         .await;
 
-    for i in 0..10 {
+    for _ in 0..10 {
         ChannelTransport::<Message>::sleep(Duration::from_secs(5)).await;
 
         eprintln!("@@@@@ INVOKE {replicas:?}");

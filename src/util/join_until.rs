@@ -1,14 +1,13 @@
-use futures::stream::FuturesUnordered;
-use futures::{FutureExt, Stream};
+use futures::{stream::FuturesUnordered, Stream};
 use pin_project_lite::pin_project;
-use std::collections::HashMap;
-use std::future::Future;
-use std::hash::Hash;
-use std::mem;
-use std::pin::Pin;
-use std::task::{ready, Context, Poll};
-use std::time::Duration;
-use tokio::select;
+use std::{
+    collections::HashMap,
+    future::Future,
+    hash::Hash,
+    mem,
+    pin::Pin,
+    task::{ready, Context, Poll},
+};
 
 pin_project! {
     /// Future for the [`join`] function.
@@ -69,7 +68,7 @@ pub fn join<K, F, I: IntoIterator<Item = (K, F)>>(iter: I) -> Join<K, F>
 where
     F: Future,
 {
-    let mut active = FuturesUnordered::default();
+    let active = FuturesUnordered::default();
     for (key, future) in iter {
         active.push(KeyedFuture {
             key: Some(key),

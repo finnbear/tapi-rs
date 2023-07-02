@@ -1,7 +1,6 @@
-use serde::{Deserialize, Serialize};
-
 use super::{Membership, ReplicaIndex};
 use crate::transport::Transport;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]

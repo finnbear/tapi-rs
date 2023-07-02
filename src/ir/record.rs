@@ -1,6 +1,6 @@
 use super::{OpId, ReplicaUpcalls, ViewNumber};
 use crate::util::vectorize;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
 
 /// The state of a record entry according to a replica.
@@ -47,10 +47,12 @@ impl Debug for Consistency {
 }
 
 impl Consistency {
+    #[allow(unused)]
     pub fn is_inconsistent(&self) -> bool {
         matches!(self, Self::Inconsistent)
     }
 
+    #[allow(unused)]
     pub fn is_consensus(&self) -> bool {
         matches!(self, Self::Consensus)
     }

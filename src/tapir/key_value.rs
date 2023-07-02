@@ -1,5 +1,4 @@
 use std::{fmt::Debug, hash::Hash};
-
 use serde::{de::DeserializeOwned, Serialize};
 
 pub trait Key:

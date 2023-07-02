@@ -5,7 +5,6 @@ use std::{
     collections::{BTreeMap, HashMap},
     hash::Hash,
     ops::{Bound, Deref, DerefMut},
-    time,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,7 +103,7 @@ impl<K: Hash + Eq, V, TS: Ord + Eq + Copy + Default> Store<K, V, TS> {
         self.inner
             .get(key)
             .map(|versions| {
-                let mut cursor = versions.upper_bound(Bound::Included(&timestamp));
+                let cursor = versions.upper_bound(Bound::Included(&timestamp));
                 if let Some((fk, _)) = cursor.key_value() {
                     if let Some((lk, _)) = cursor.peek_next() {
                         (*fk, Some(*lk))

@@ -1,14 +1,13 @@
 use super::{
-    DoViewChange, FinalizeInconsistent, Membership, MembershipSize, Message, OpId,
-    ProposeConsensus, ProposeInconsistent, ReplicaIndex, ReplicaUpcalls, ReplyUnlogged,
-    RequestUnlogged, ViewChangeAddendum, ViewNumber,
+    Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent, Membership, MembershipSize,
+    Message, OpId, ProposeConsensus, ProposeInconsistent, ReplicaIndex, ReplicaUpcalls,
+    ReplyConsensus, ReplyInconsistent, ReplyUnlogged, RequestUnlogged, ViewNumber,
 };
 use crate::{
-    ir::{membership, Confirm, FinalizeConsensus, Replica, ReplyConsensus, ReplyInconsistent},
-    util::{join, Join, Until},
+    util::{join, Join},
     Transport,
 };
-use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
+use futures::{stream::FuturesUnordered, StreamExt};
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -17,23 +16,19 @@ use std::{
     future::Future,
     hash::Hash,
     marker::PhantomData,
-    pin::Pin,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     task::Context,
     time::Duration,
 };
 use tokio::select;
 
+/// Randomly chosen id, unique to each IR client.
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct Id(pub u64);
 
 impl Id {
     fn new() -> Self {
-        let mut rng = thread_rng();
-        Self(rng.gen())
+        Self(thread_rng().gen())
     }
 }
 
@@ -43,6 +38,7 @@ impl Debug for Id {
     }
 }
 
+/// IR client, capable of invoking operations on an IR replica group.
 pub struct Client<U: ReplicaUpcalls, T: Transport> {
     id: Id,
     inner: Arc<Inner<T>>,
@@ -72,7 +68,7 @@ struct SyncInner<T: Transport> {
 
 impl<T: Transport> SyncInner<T> {
     fn next_number(&mut self) -> u64 {
-        let mut ret = self.operation_counter;
+        let ret = self.operation_counter;
         self.operation_counter += 1;
         ret
     }
@@ -150,7 +146,7 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                     futures.push(future);
                 }
 
-                let mut timeout = std::pin::pin!(T::sleep(Duration::from_millis(250)));
+                let timeout = std::pin::pin!(T::sleep(Duration::from_millis(250)));
 
                 let response = select! {
                     _ = timeout, if futures.len() < count => {
@@ -167,6 +163,8 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
         }
     }
 
+    /// Returns a `Join` over getting an unlogged response from all replicas.
+    ///
     /// A consenSUS operation; can get a quorum but doesn't preserve decisions.
     pub fn invoke_unlogged_joined(
         &self,
@@ -190,8 +188,8 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
         (future, membership_size)
     }
 
+    /// Returns when the inconsistent operation is finalized, retrying indefinitely.
     pub fn invoke_inconsistent(&self, op: U::IO) -> impl Future<Output = ()> {
-        let client_id = self.id;
         let inner = Arc::clone(&self.inner);
 
         let op_id = {
@@ -289,6 +287,7 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
         }
     }
 
+    /// Returns the consensus result, retrying indefinitely.
     pub fn invoke_consensus(
         &self,
         op: U::CO,
@@ -339,7 +338,7 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
         let inner = Arc::clone(&self.inner);
 
         async move {
-            'retry: loop {
+            loop {
                 let (membership_size, op_id, future) = {
                     let mut sync = inner.sync.lock().unwrap();
                     let number = sync.next_number();

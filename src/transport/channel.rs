@@ -1,13 +1,14 @@
 use super::{Message, Transport};
 use rand::{thread_rng, Rng};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::future::Future;
-use std::ops::Range;
-use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, SystemTime};
+use serde::{de::DeserializeOwned, Serialize};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    future::Future,
+    ops::Range,
+    sync::{Arc, Mutex, RwLock},
+    time::{Duration, SystemTime},
+};
 
 const LOG: bool = true;
 
@@ -69,11 +70,11 @@ impl<M> Clone for Channel<M> {
 }
 
 impl<M: Message> Channel<M> {
+    #[allow(unused_variables)]
     fn should_drop(from: usize, to: usize) -> bool {
         //return false;
         //return (from == 1) ^ (to == 1);
 
-        use rand::Rng;
         rand::thread_rng().gen_bool(1.0 / 5.0)
     }
 

@@ -1,6 +1,3 @@
-mod channel;
-mod message;
-
 pub use channel::{Channel, Registry as ChannelRegistry};
 pub use message::Message;
 use serde::{de::DeserializeOwned, Serialize};
@@ -9,6 +6,9 @@ use std::{
     future::Future,
     time::{Duration, SystemTime},
 };
+
+mod channel;
+mod message;
 
 pub trait Transport: Clone + Send + Sync + 'static {
     type Address: Copy + Eq + Debug + Send + 'static;
@@ -20,7 +20,6 @@ pub trait Transport: Clone + Send + Sync + 'static {
 
     /// Get time (nanos since epoch).
     fn time(&self) -> u64 {
-        use rand::Rng;
         SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()

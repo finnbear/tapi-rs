@@ -1,5 +1,5 @@
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::HashMap, fmt::format, hash::Hash, marker::PhantomData};
+use std::{collections::HashMap, hash::Hash, marker::PhantomData};
 
 pub fn serialize<S: Serializer, K: Serialize, V: Serialize>(
     m: &HashMap<K, V>,

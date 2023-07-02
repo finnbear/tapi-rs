@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-
 use super::ClientId;
 use std::fmt::Debug;
 

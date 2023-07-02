@@ -62,7 +62,7 @@ impl<K: Key, V: Value, TS> Transaction<K, V, TS> {
             Entry::Vacant(vacant) => {
                 vacant.insert(timestamp);
             }
-            Entry::Occupied(occupied) => {
+            Entry::Occupied(_) => {
                 panic!();
             }
         }

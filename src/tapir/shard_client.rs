@@ -1,20 +1,12 @@
-use rand::{thread_rng, Rng};
-
 use super::{Key, Replica, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::{
-    transport::Transport, IrClient, IrClientId, IrMembership, IrMessage, IrReplicaIndex,
-    OccPrepareResult, OccTransaction, OccTransactionId,
+    transport::Transport, IrClient, IrClientId, IrMembership, IrMessage, OccPrepareResult,
+    OccTransaction, OccTransactionId,
 };
 use std::{
     collections::HashMap,
-    fmt::Debug,
     future::Future,
-    hash::Hash,
-    process::Output,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 
 pub struct ShardClient<K: Key, V: Value, T: Transport> {
@@ -102,7 +94,6 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
                     }
                 }
 
-                use rand::Rng;
                 let future = client.invoke_unlogged(UO::Get {
                     key: key.clone(),
                     timestamp: None,
@@ -143,7 +134,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
         &self,
         timestamp: Timestamp,
     ) -> impl Future<Output = OccPrepareResult<Timestamp>> + Send {
-        let mut lock = self.inner.lock().unwrap();
+        let lock = self.inner.lock().unwrap();
         let future = self.client.invoke_consensus(
             CO::Prepare {
                 transaction_id: lock.id,
@@ -214,7 +205,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
         prepared_timestamp: Timestamp,
         commit: bool,
     ) -> impl Future<Output = ()> + Send {
-        let mut lock = self.inner.lock().unwrap();
+        let lock = self.inner.lock().unwrap();
         let future = self.client.invoke_inconsistent(if commit {
             IO::Commit {
                 transaction_id: lock.id,
@@ -224,7 +215,6 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTr
         } else {
             IO::Abort {
                 transaction_id: lock.id,
-                transaction: lock.inner.clone(),
                 commit: None,
             }
         });

@@ -1,5 +1,5 @@
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::BTreeMap, fmt::format, marker::PhantomData};
+use std::{collections::BTreeMap, marker::PhantomData};
 
 pub fn serialize<S: Serializer, K: Serialize, V: Serialize>(
     m: &BTreeMap<K, V>,

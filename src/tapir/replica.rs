@@ -7,7 +7,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::task::Context;
-use std::{collections::HashMap, fmt::Debug, future::Future, hash::Hash};
+use std::time::Duration;
+use std::{collections::HashMap, future::Future, hash::Hash};
 
 /// Diverge from TAPIR and don't maintain a no-vote list. Instead, wait for a
 /// view change to syncronize each participant shard's prepare result and then
@@ -152,11 +153,13 @@ impl<K: Key, V: Value> Replica<K, V> {
                 commit,
             });
 
+            let mut timeout = std::pin::pin!(T::sleep(Duration::from_millis(1000)));
             let results = future
                 .until(
                     |results: &HashMap<IrReplicaIndex, ReplyUnlogged<UR<V>>>,
                      cx: &mut Context<'_>| {
                         decide(results, membership).is_some()
+                            || timeout.as_mut().poll(cx).is_ready()
                     },
                 )
                 .await;
@@ -181,7 +184,6 @@ impl<K: Key, V: Value> Replica<K, V> {
                     client
                         .invoke_inconsistent(IO::Abort {
                             transaction_id,
-                            transaction,
                             commit: Some(commit),
                         })
                         .await
@@ -229,7 +231,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     .inner
                     .prepared
                     .get(&transaction_id)
-                    .filter(|(ts, _, f)| *ts == commit)
+                    .filter(|(ts, _, _)| *ts == commit)
                     .map(|(_, _, f)| *f)
                 {
                     // Already prepared at this timestamp.
@@ -251,7 +253,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     // Too late for the client to prepare.
                     OccPrepareResult::TooLate
                 } else {
-                    /// Not sure.
+                    // Not sure.
                     OccPrepareResult::Abstain
                 })
             }
@@ -280,7 +282,6 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
             }
             IO::Abort {
                 transaction_id,
-                transaction,
                 commit,
             } => {
                 #[allow(clippy::blocks_in_if_conditions)]
@@ -391,8 +392,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
         match op {
             CO::Prepare {
                 transaction_id,
-                transaction,
                 commit,
+                ..
             } => {
                 if matches!(res, CR::Prepare(OccPrepareResult::Ok)) && let Some((ts, _, finalized)) = self.inner.prepared.get_mut(transaction_id) && *commit == *ts {
                     eprintln!("confirming prepare {transaction_id:?} at {commit:?}");
@@ -517,8 +518,8 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
             let result = match request {
                 CO::Prepare {
                     transaction_id,
-                    transaction,
                     commit,
+                    ..
                 } => {
                     let result = if matches!(reply, CR::Prepare(OccPrepareResult::Ok)) {
                         // Possibly successful fast quorum.
