@@ -1,3 +1,4 @@
+use crate::IrReplicaIndex;
 pub use channel::{Channel, Registry as ChannelRegistry};
 pub use message::Message;
 use serde::{de::DeserializeOwned, Serialize};
@@ -10,13 +11,14 @@ use std::{
 mod channel;
 mod message;
 
+pub struct ReplicaId {
+    pub shard: usize,
+    pub replica: IrReplicaIndex,
+}
+
 pub trait Transport: Clone + Send + Sync + 'static {
-    type Address: Copy + Eq + Debug + Send + 'static;
     type Sleep: Future<Output = ()> + Send;
     type Message: Message;
-
-    /// Get own address.
-    fn address(&self) -> Self::Address;
 
     /// Get time (nanos since epoch).
     fn time(&self) -> u64 {
@@ -46,10 +48,10 @@ pub trait Transport: Clone + Send + Sync + 'static {
     /// Send/retry, ignoring any errors, until there is a reply.
     fn send<R: TryFrom<Self::Message> + Send + Debug>(
         &self,
-        address: Self::Address,
+        to: ReplicaId,
         message: impl Into<Self::Message> + Debug,
     ) -> impl Future<Output = R> + Send + 'static;
 
     /// Send once and don't wait for a reply.
-    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + Debug);
+    fn do_send(&self, to: ReplicaId, message: impl Into<Self::Message> + Debug);
 }

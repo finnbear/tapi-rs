@@ -10,7 +10,7 @@ mod view;
 mod tests;
 
 pub use client::{Client, Id as ClientId};
-pub use membership::{Membership, Size as MembershipSize};
+pub use membership::Size as MembershipSize;
 pub use message::{
     Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent, Message, ProposeConsensus,
     ProposeInconsistent, ReplyConsensus, ReplyInconsistent, ReplyUnlogged, RequestUnlogged,

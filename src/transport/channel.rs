@@ -1,4 +1,4 @@
-use super::{Message, Transport};
+use super::{Message, ReplicaId, Transport};
 use rand::{thread_rng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -26,7 +26,7 @@ impl<M> Default for Registry<M> {
 
 struct Inner<M> {
     #[allow(clippy::type_complexity)]
-    callbacks: Vec<Arc<dyn Fn(usize, M) -> Option<M> + Send + Sync>>,
+    callbacks: Vec<Arc<dyn Fn(ReplicaId, M) -> Option<M> + Send + Sync>>,
 }
 
 impl<M> Default for Inner<M> {
@@ -40,7 +40,7 @@ impl<M> Default for Inner<M> {
 impl<M> Registry<M> {
     pub fn channel(
         &self,
-        callback: impl Fn(usize, M) -> Option<M> + Send + Sync + 'static,
+        callback: impl Fn(ReplicaId, M) -> Option<M> + Send + Sync + 'static,
     ) -> Channel<M> {
         let mut inner = self.inner.write().unwrap();
         let address = inner.callbacks.len();
@@ -86,13 +86,8 @@ impl<M: Message> Channel<M> {
 }
 
 impl<M: Message> Transport for Channel<M> {
-    type Address = usize;
     type Sleep = tokio::time::Sleep;
     type Message = M;
-
-    fn address(&self) -> Self::Address {
-        self.address
-    }
 
     fn time(&self) -> u64 {
         self.time_offset(rand::thread_rng().gen_range(0..100))
@@ -138,7 +133,7 @@ impl<M: Message> Transport for Channel<M> {
 
     fn send<R: TryFrom<M> + Send + Debug>(
         &self,
-        address: Self::Address,
+        to: ReplicaId,
         message: impl Into<Self::Message> + Debug,
     ) -> impl Future<Output = R> + 'static {
         let from: usize = self.address;
@@ -179,7 +174,7 @@ impl<M: Message> Transport for Channel<M> {
         }
     }
 
-    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + Debug) {
+    fn do_send(&self, shard: usize, replica: usize, message: impl Into<Self::Message> + Debug) {
         let from = self.address;
         let should_drop = Self::should_drop(self.address, address);
         if LOG {

@@ -104,10 +104,6 @@ impl Transport for Maelstrom {
     type Message = Message;
     type Sleep = tokio::time::Sleep;
 
-    fn address(&self) -> Self::Address {
-        self.id
-    }
-
     fn persist<T: serde::Serialize>(&self, _key: &str, _value: Option<&T>) {
         // no-op.
     }

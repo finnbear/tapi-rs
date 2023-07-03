@@ -4,7 +4,7 @@ use super::{
     RecordEntryState, RecordInconsistentEntry, ReplyConsensus, ReplyInconsistent, ReplyUnlogged,
     RequestUnlogged, StartView, View, ViewNumber,
 };
-use crate::{Transport, TransportMessage};
+use crate::{transport::ReplicaId, Transport, TransportMessage};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
@@ -103,12 +103,12 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Debug for Replica<U, T> {
 
 struct Inner<U: Upcalls, T: Transport<Message = Message<U>>> {
     transport: T,
-    sync: Mutex<Sync<U, T>>,
+    sync: Mutex<Sync<U>>,
 }
 
-struct Sync<U: Upcalls, T: Transport<Message = Message<U>>> {
+struct Sync<U: Upcalls> {
     status: Status,
-    view: View<T>,
+    view: View,
     latest_normal_view: ViewNumber,
     changed_view_recently: bool,
     upcalls: U,
@@ -179,8 +179,8 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
         format!("ir_replica_{}", self.index.0)
     }
 
-    fn persist_view_info(&self, sync: &Sync<U, T>) {
-        if sync.view.membership.len() == 1 {
+    fn persist_view_info(&self, sync: &Sync<U>) {
+        if sync.view.membership.count() == 1 {
             return;
         }
         self.inner.transport.persist(
@@ -208,7 +208,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                 } else if sync
                     .peer_liveness
                     .get(&Index(
-                        ((sync.view.number.0 + 1) % sync.view.membership.len() as u64) as usize,
+                        ((sync.view.number.0 + 1) % sync.view.membership.count() as u64) as usize,
                     ))
                     .map(|t| t.elapsed() > Duration::from_secs(3))
                     .unwrap_or(false)
@@ -248,7 +248,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
         });
     }
 
-    fn broadcast_do_view_change(my_index: Index, transport: &T, sync: &mut Sync<U, T>) {
+    fn broadcast_do_view_change(my_index: Index, transport: &T, sync: &mut Sync<U>) {
         sync.changed_view_recently = true;
         for (index, address) in &sync.view.membership {
             if index == my_index {
@@ -268,7 +268,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
         }
     }
 
-    pub fn receive(&self, address: T::Address, message: Message<U>) -> Option<Message<U>> {
+    pub fn receive(&self, from: ReplicaId, message: Message<U>) -> Option<Message<U>> {
         let mut sync = self.inner.sync.lock().unwrap();
         let sync = &mut *sync;
 
@@ -422,7 +422,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                             }
                         }
 
-                        let threshold = sync.view.membership.size().f();
+                        let threshold = sync.view.membership.f();
                         let matching = sync
                             .outstanding_do_view_changes
                             .values()
@@ -538,7 +538,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                                             .count();
 
                                         if matches
-                                            >= sync.view.membership.size().f_over_two_plus_one()
+                                            >= sync.view.membership.f_over_two_plus_one()
                                         {
                                             majority_result_in_d = Some(entry.result.clone());
                                             break;
@@ -588,12 +588,12 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                             sync.view.number = msg_view_number;
                             sync.latest_normal_view = msg_view_number;
                             self.persist_view_info(&*sync);
-                            for (index, address) in &sync.view.membership {
+                            for index in sync.view.membership {
                                 if index == self.index {
                                     continue;
                                 }
                                 self.inner.transport.do_send(
-                                    address,
+                                    index,
                                     Message::<U>::StartView(StartView {
                                         record: sync.record.clone(),
                                         view_number: sync.view.number,
