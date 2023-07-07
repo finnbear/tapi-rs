@@ -1,7 +1,6 @@
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
-    IrMessage, IrOpId, IrRecord, IrReplica, IrReplicaIndex,
-    IrReplicaUpcalls, Transport,
+    IrMessage, IrOpId, IrRecord, IrReplica, IrReplicaIndex, IrReplicaUpcalls, Transport,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -45,7 +44,7 @@ async fn lock_server(num_replicas: usize) {
         No,
     }
 
-    type Message = IrMessage<Upcalls>;
+    type Message = IrMessage<Upcalls, usize>;
 
     #[derive(Serialize, Deserialize)]
     struct Upcalls {
@@ -134,7 +133,7 @@ async fn lock_server(num_replicas: usize) {
     fn create_replica(
         index: IrReplicaIndex,
         registry: &ChannelRegistry<Message>,
-        membership: &IrMembership<ChannelTransport<Message>>,
+        membership: &IrMembership<usize>,
     ) -> Arc<IrReplica<Upcalls, ChannelTransport<Message>>> {
         Arc::new_cyclic(
             |weak: &std::sync::Weak<IrReplica<Upcalls, ChannelTransport<Message>>>| {
@@ -153,7 +152,7 @@ async fn lock_server(num_replicas: usize) {
 
     fn create_client(
         registry: &ChannelRegistry<Message>,
-        membership: &IrMembership<ChannelTransport<Message>>,
+        membership: &IrMembership<usize>,
     ) -> Arc<IrClient<Upcalls, ChannelTransport<Message>>> {
         let channel = registry.channel(move |_, _| unreachable!());
         Arc::new(IrClient::new(membership.clone(), channel))

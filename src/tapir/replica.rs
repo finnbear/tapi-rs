@@ -52,11 +52,11 @@ impl<K: Key, V: Value> Replica<K, V> {
         }
     }
 
-    fn recover_coordination<T: Transport<Message = IrMessage<Self>>>(
+    fn recover_coordination<T: Transport<Message = IrMessage<Self, T>>>(
         transaction_id: OccTransactionId,
         transaction: OccTransaction<K, V, Timestamp>,
         commit: Timestamp,
-        membership: IrMembership<T>,
+        membership: IrMembership<T::Address>,
         transport: T,
     ) -> impl Future<Output = ()> {
         eprintln!("trying to recover {transaction_id:?}");
@@ -574,9 +574,9 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
         ret
     }
 
-    fn tick<T: Transport<Message = IrMessage<Self>>>(
+    fn tick<T: Transport<Message = IrMessage<Self, T>>>(
         &mut self,
-        membership: &IrMembership<T>,
+        membership: &IrMembership<T::Address>,
         transport: &T,
     ) {
         eprintln!(

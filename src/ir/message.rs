@@ -1,19 +1,22 @@
+use crate::Transport;
+
 use super::{
-    record::RecordImpl, OpId, RecordEntryState, ReplicaIndex, ReplicaUpcalls, ViewNumber,
+    record::RecordImpl, OpId, RecordEntryState, ReplicaIndex, ReplicaUpcalls, View, ViewNumber,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-pub type Message<U> = MessageImpl<
+pub type Message<U, A> = MessageImpl<
     <U as ReplicaUpcalls>::UO,
     <U as ReplicaUpcalls>::UR,
     <U as ReplicaUpcalls>::IO,
     <U as ReplicaUpcalls>::CO,
     <U as ReplicaUpcalls>::CR,
+    A,
 >;
 
 #[derive(Clone, derive_more::From, derive_more::TryInto, Serialize, Deserialize)]
-pub enum MessageImpl<UO, UR, IO, CO, CR> {
+pub enum MessageImpl<UO, UR, IO, CO, CR, A> {
     RequestUnlogged(RequestUnlogged<UO>),
     ReplyUnlogged(ReplyUnlogged<UR>),
     ProposeInconsistent(ProposeInconsistent<IO>),
@@ -23,7 +26,7 @@ pub enum MessageImpl<UO, UR, IO, CO, CR> {
     FinalizeInconsistent(FinalizeInconsistent),
     FinalizeConsensus(FinalizeConsensus<CR>),
     Confirm(Confirm),
-    DoViewChange(DoViewChange<IO, CO, CR>),
+    DoViewChange(DoViewChange<IO, CO, CR, A>),
     StartView(StartView<IO, CO, CR>),
 }
 
@@ -117,9 +120,9 @@ pub struct Confirm {
 
 /// Informs a replica about a new view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DoViewChange<IO, CO, CR> {
+pub struct DoViewChange<IO, CO, CR, A> {
     /// View number to change to.
-    pub view_number: ViewNumber,
+    pub view_number: View<A>,
     /// Is `Some` when sent from replica to new leader.
     pub addendum: Option<ViewChangeAddendum<IO, CO, CR>>,
 }

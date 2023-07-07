@@ -74,7 +74,7 @@ pub trait Upcalls: Sized + Send + Serialize + DeserializeOwned + 'static {
     ) -> HashMap<OpId, Self::CR>;
     fn tick<T: Transport<Message = Message<Self>>>(
         &mut self,
-        membership: &Membership<T>,
+        membership: &Membership<T::Address>,
         transport: &T,
     ) {
         let _ = (membership, transport);
@@ -82,12 +82,12 @@ pub trait Upcalls: Sized + Send + Serialize + DeserializeOwned + 'static {
     }
 }
 
-pub struct Replica<U: Upcalls, T: Transport<Message = Message<U>>> {
+pub struct Replica<U: Upcalls, T: Transport> {
     index: Index,
     inner: Arc<Inner<U, T>>,
 }
 
-impl<U: Upcalls, T: Transport<Message = Message<U>>> Debug for Replica<U, T> {
+impl<U: Upcalls, T: Transport> Debug for Replica<U, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Replica");
         if let Ok(sync) = self.inner.sync.try_lock() {
@@ -101,44 +101,45 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Debug for Replica<U, T> {
     }
 }
 
-struct Inner<U: Upcalls, T: Transport<Message = Message<U>>> {
+struct Inner<U: Upcalls, T: Transport> {
     transport: T,
-    sync: Mutex<Sync<U, T>>,
+    sync: Mutex<Sync<U, T::Address>>,
 }
 
-struct Sync<U: Upcalls, T: Transport<Message = Message<U>>> {
+struct Sync<U: Upcalls, A> {
     status: Status,
-    view: View<T>,
-    latest_normal_view: ViewNumber,
+    view: View<A>,
+    latest_normal_view: View<A>,
     changed_view_recently: bool,
     upcalls: U,
     record: Record<U>,
-    outstanding_do_view_changes: HashMap<Index, DoViewChange<U::IO, U::CO, U::CR>>,
+    outstanding_do_view_changes: HashMap<Index, DoViewChange<U::IO, U::CO, U::CR, A>>,
     /// Last time received message from each peer replica.
     peer_liveness: HashMap<Index, Instant>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct PersistentViewInfo {
-    view: ViewNumber,
-    latest_normal_view: ViewNumber,
+struct PersistentViewInfo<A> {
+    view: View<A>,
+    latest_normal_view: View<A>,
 }
 
-impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
+impl<U: Upcalls, T: Transport> Replica<U, T> {
     const VIEW_CHANGE_INTERVAL: Duration = Duration::from_secs(4);
 
-    pub fn new(index: Index, membership: Membership<T>, upcalls: U, transport: T) -> Self {
+    pub fn new(index: Index, membership: Membership<T::Address>, upcalls: U, transport: T) -> Self {
+        let view = View {
+            membership,
+            number: ViewNumber(0),
+        };
         let ret = Self {
             index,
             inner: Arc::new(Inner {
                 transport,
                 sync: Mutex::new(Sync {
                     status: Status::Normal,
-                    view: View {
-                        membership,
-                        number: ViewNumber(0),
-                    },
-                    latest_normal_view: ViewNumber(0),
+                    latest_normal_view: view.clone(),
+                    view,
                     changed_view_recently: true,
                     upcalls,
                     record: Record::<U>::default(),
@@ -179,7 +180,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
         format!("ir_replica_{}", self.index.0)
     }
 
-    fn persist_view_info(&self, sync: &Sync<U, T>) {
+    fn persist_view_info(&self, sync: &Sync<U, T::Address>) {
         if sync.view.membership.len() == 1 {
             return;
         }
@@ -248,7 +249,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
         });
     }
 
-    fn broadcast_do_view_change(my_index: Index, transport: &T, sync: &mut Sync<U, T>) {
+    fn broadcast_do_view_change(my_index: Index, transport: &T, sync: &mut Sync<U, T::Address>) {
         sync.changed_view_recently = true;
         for (index, address) in &sync.view.membership {
             if index == my_index {
@@ -268,7 +269,11 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
         }
     }
 
-    pub fn receive(&self, address: T::Address, message: Message<U>) -> Option<Message<U>> {
+    pub fn receive(
+        &self,
+        address: T::Address,
+        message: Message<U>,
+    ) -> Option<Message<U, T::Address>> {
         let mut sync = self.inner.sync.lock().unwrap();
         let sync = &mut *sync;
 
@@ -460,7 +465,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                                         .map(|(i, dvt)| (*i, dvt.view_number, dvt.addendum.as_ref().unwrap().latest_normal_view))
                                         .chain(
                                             std::iter::once(
-                                                (self.index, sync.view.number, sync.latest_normal_view)
+                                                (self.index, sync.view.number, sync.latest_normal_view.number)
                                             )
                                         )
                                         .collect::<Vec<_>>()

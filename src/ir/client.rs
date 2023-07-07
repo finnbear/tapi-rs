@@ -57,16 +57,16 @@ impl<U: ReplicaUpcalls, T: Transport> Clone for Client<U, T> {
 
 struct Inner<T: Transport> {
     transport: T,
-    sync: Mutex<SyncInner<T>>,
+    sync: Mutex<SyncInner<T::Address>>,
 }
 
-struct SyncInner<T: Transport> {
+struct SyncInner<A> {
     operation_counter: u64,
-    membership: Membership<T>,
+    membership: Membership<A>,
     recent: ViewNumber,
 }
 
-impl<T: Transport> SyncInner<T> {
+impl<A> SyncInner<A> {
     fn next_number(&mut self) -> u64 {
         let ret = self.operation_counter;
         self.operation_counter += 1;
@@ -75,7 +75,7 @@ impl<T: Transport> SyncInner<T> {
 }
 
 impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
-    pub fn new(membership: Membership<T>, transport: T) -> Self {
+    pub fn new(membership: Membership<T::Address>, transport: T) -> Self {
         Self {
             id: Id::new(),
             inner: Arc::new(Inner {
@@ -100,7 +100,7 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
 
     fn notify_old_views(
         transport: &T,
-        sync: &mut SyncInner<T>,
+        sync: &mut SyncInner<T::Address>,
         views: impl IntoIterator<Item = (ReplicaIndex, ViewNumber)> + Clone,
     ) {
         if let Some(latest_view) = views.clone().into_iter().map(|(_, n)| n).max() {

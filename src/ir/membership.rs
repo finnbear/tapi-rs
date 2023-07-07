@@ -1,35 +1,25 @@
-use std::fmt::Debug;
-
-use crate::transport::Transport;
+use serde::{Deserialize, Serialize};
 
 use super::ReplicaIndex;
+use std::fmt::Debug;
 
 /// Internally stores 'f'
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Size(usize);
 
 /// Stores the address of replica group members.
-#[derive(Clone)]
-pub struct Membership<T: Transport> {
-    members: Vec<T::Address>,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Membership<A> {
+    members: Vec<A>,
 }
 
-impl<T: Transport> Debug for Membership<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Membership")
-            .field("members", &self.members)
-            .finish()
-    }
-}
-
-impl<T: Transport> Membership<T> {
-    /// Must have an odd number of replicas.
-    pub fn new(members: Vec<T::Address>) -> Self {
-        assert_eq!(members.len() % 2, 1);
+impl<A: PartialEq> Membership<A> {
+    pub fn new(members: Vec<A>) -> Self {
+        assert!(!members.is_empty());
         Self { members }
     }
 
-    pub fn get(&self, index: ReplicaIndex) -> Option<T::Address> {
+    pub fn get(&self, index: ReplicaIndex) -> Option<A> {
         self.members.get(index.0).cloned()
     }
 
@@ -42,7 +32,7 @@ impl<T: Transport> Membership<T> {
         self.members.len()
     }
 
-    pub fn get_index(&self, address: T::Address) -> Option<ReplicaIndex> {
+    pub fn get_index(&self, address: A) -> Option<ReplicaIndex> {
         self.members
             .iter()
             .position(|a| *a == address)
@@ -53,19 +43,17 @@ impl<T: Transport> Membership<T> {
     pub fn iter(
         &self,
     ) -> std::iter::Map<
-        std::iter::Enumerate<std::slice::Iter<'_, T::Address>>,
-        for<'a> fn((usize, &'a T::Address)) -> (ReplicaIndex, T::Address),
+        std::iter::Enumerate<std::slice::Iter<'_, A>>,
+        for<'a> fn((usize, &'a A)) -> (ReplicaIndex, A),
     > {
         self.into_iter()
     }
 }
 
-impl<T: Transport> IntoIterator for Membership<T> {
-    type Item = (ReplicaIndex, T::Address);
-    type IntoIter = std::iter::Map<
-        std::iter::Enumerate<std::vec::IntoIter<T::Address>>,
-        fn((usize, T::Address)) -> Self::Item,
-    >;
+impl<A> IntoIterator for Membership<A> {
+    type Item = (ReplicaIndex, A);
+    type IntoIter =
+        std::iter::Map<std::iter::Enumerate<std::vec::IntoIter<A>>, fn((usize, A)) -> Self::Item>;
     fn into_iter(self) -> Self::IntoIter {
         self.members
             .into_iter()
@@ -74,11 +62,11 @@ impl<T: Transport> IntoIterator for Membership<T> {
     }
 }
 
-impl<'a, T: Transport> IntoIterator for &'a Membership<T> {
-    type Item = (ReplicaIndex, T::Address);
+impl<'a, A> IntoIterator for &'a Membership<A> {
+    type Item = (ReplicaIndex, A);
     type IntoIter = std::iter::Map<
-        std::iter::Enumerate<std::slice::Iter<'a, T::Address>>,
-        for<'b> fn((usize, &'b T::Address)) -> Self::Item,
+        std::iter::Enumerate<std::slice::Iter<'a, A>>,
+        for<'b> fn((usize, &'b A)) -> Self::Item,
     >;
     fn into_iter(self) -> Self::IntoIter {
         self.members

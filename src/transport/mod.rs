@@ -9,11 +9,9 @@ use std::{
 
 mod channel;
 mod message;
-
 pub trait Transport: Clone + Send + Sync + 'static {
-    type Address: Copy + Eq + Debug + Send + 'static;
+    type Address: Copy + Eq + Debug + Send + Serialize + DeserializeOwned + 'static;
     type Sleep: Future<Output = ()> + Send;
-    type Message: Message;
 
     /// Get own address.
     fn address(&self) -> Self::Address;
@@ -37,19 +35,24 @@ pub trait Transport: Clone + Send + Sync + 'static {
     /// Synchronously persist a key-value pair. Any future calls
     /// to `persisted` should return this value unless/until it
     /// is overwritten.
-    // TODO: Allow safe expiration mechanism for checkpoints.
     fn persist<T: Serialize>(&self, key: &str, value: Option<&T>);
 
     /// Synchronously load a persisted key-value pair.
     fn persisted<T: DeserializeOwned>(&self, key: &str) -> Option<T>;
 
+    /// Receive sent messages except replies (replaces any previously sent callback).
+    fn receive<M: Debug + Serialize + DeserializeOwned>(
+        &self,
+        callback: impl Fn(usize, M) -> Option<M> + Send + Sync + 'static,
+    );
+
     /// Send/retry, ignoring any errors, until there is a reply.
-    fn send<R: TryFrom<Self::Message> + Send + Debug>(
+    fn send<M: Debug + Serialize + Deserialize>(
         &self,
         address: Self::Address,
-        message: impl Into<Self::Message> + Debug,
-    ) -> impl Future<Output = R> + Send + 'static;
+        message: &M,
+    ) -> impl Future<Output = M> + Send + 'static;
 
     /// Send once and don't wait for a reply.
-    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + Debug);
+    fn do_send<M: Debug + Serialize>(&self, address: Self::Address, message: &M);
 }

@@ -17,8 +17,10 @@ impl Debug for Number {
         write!(f, "V({})", self.0)
     }
 }
-pub struct View<T: Transport> {
-    pub membership: Membership<T>,
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct View<A> {
+    pub membership: Membership<A>,
     pub number: Number,
 }
 

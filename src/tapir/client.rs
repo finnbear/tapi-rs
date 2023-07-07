@@ -23,8 +23,8 @@ pub struct Transaction<K: Key, V: Value, T: Transport> {
     inner: ShardTransaction<K, V, T>,
 }
 
-impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Client<K, V, T> {
-    pub fn new(membership: IrMembership<T>, transport: T) -> Self {
+impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>, T>>> Client<K, V, T> {
+    pub fn new(membership: IrMembership<T::Address>, transport: T) -> Self {
         Self {
             inner: ShardClient::new(membership, transport.clone()),
             transport,
@@ -44,7 +44,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Client<
     }
 }
 
-impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transaction<K, V, T> {
+impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>, T>>> Transaction<K, V, T> {
     pub fn get(&self, key: K) -> impl Future<Output = Option<V>> {
         self.inner.get(key)
     }

@@ -16,8 +16,8 @@ use std::{
 
 type K = i64;
 type V = i64;
-type Message = IrMessage<TapirReplica<K, V>>;
 type Transport = ChannelTransport<Message>;
+type Message = IrMessage<TapirReplica<K, V>, Transport>;
 
 fn build_kv(
     linearizable: bool,
@@ -37,7 +37,7 @@ fn build_kv(
     fn create_replica(
         index: IrReplicaIndex,
         registry: &ChannelRegistry<Message>,
-        membership: &IrMembership<ChannelTransport<Message>>,
+        membership: &IrMembership<usize>,
         linearizable: bool,
     ) -> Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<Message>>> {
         Arc::new_cyclic(
@@ -57,7 +57,7 @@ fn build_kv(
 
     fn create_client(
         registry: &ChannelRegistry<Message>,
-        membership: &IrMembership<ChannelTransport<Message>>,
+        membership: &IrMembership<usize>,
     ) -> Arc<TapirClient<K, V, ChannelTransport<Message>>> {
         let channel = registry.channel(move |_, _| unreachable!());
         Arc::new(TapirClient::new(membership.clone(), channel))

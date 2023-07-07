@@ -13,8 +13,8 @@ pub struct ShardClient<K: Key, V: Value, T: Transport> {
     inner: IrClient<Replica<K, V>, T>,
 }
 
-impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardClient<K, V, T> {
-    pub fn new(membership: IrMembership<T>, transport: T) -> Self {
+impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>, T>>> ShardClient<K, V, T> {
+    pub fn new(membership: IrMembership<T::Address>, transport: T) -> Self {
         Self {
             inner: IrClient::new(membership, transport),
         }
@@ -50,7 +50,9 @@ struct Inner<K: Key, V: Value> {
     read_cache: HashMap<K, Option<V>>,
 }
 
-impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTransaction<K, V, T> {
+impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>, T>>>
+    ShardTransaction<K, V, T>
+{
     fn new(client: IrClient<Replica<K, V>, T>, id: OccTransactionId) -> Self {
         Self {
             client,

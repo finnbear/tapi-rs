@@ -136,16 +136,15 @@ impl<M: Message> Transport for Channel<M> {
             .and_then(|value| serde_json::from_str(value).ok())
     }
 
-    fn send<R: TryFrom<M> + Send + Debug>(
+    fn send<M: Debug + Serialize + DeserializeOwned>(
         &self,
         address: Self::Address,
-        message: impl Into<Self::Message> + Debug,
-    ) -> impl Future<Output = R> + 'static {
+        message: &M,
+    ) -> impl Future<Output = M> + 'static {
         let from: usize = self.address;
         if LOG {
             println!("{from} sending {message:?} to {address}");
         }
-        let message = message.into();
         let inner = Arc::clone(&self.inner);
         async move {
             loop {
@@ -158,9 +157,7 @@ impl<M: Message> Transport for Channel<M> {
                     if Self::should_drop(from, address) {
                         continue;
                     }
-                    let result = callback(from, message.clone())
-                        .map(|r| r.try_into().unwrap_or_else(|_| panic!()));
-                    if let Some(result) = result {
+                    if let Some(result) = callback(from, message.clone()) {
                         let should_drop = Self::should_drop(address, from);
                         if LOG {
                             println!(
@@ -179,7 +176,7 @@ impl<M: Message> Transport for Channel<M> {
         }
     }
 
-    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + Debug) {
+    fn do_send<M: Debug + Serialize>(&self, address: Self::Address, message: impl M) {
         let from = self.address;
         let should_drop = Self::should_drop(self.address, address);
         if LOG {
