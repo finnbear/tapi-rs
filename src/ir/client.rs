@@ -39,13 +39,13 @@ impl Debug for Id {
 }
 
 /// IR client, capable of invoking operations on an IR replica group.
-pub struct Client<U: ReplicaUpcalls, T: Transport> {
+pub struct Client<U: ReplicaUpcalls, T: Transport<U>> {
     id: Id,
-    inner: Arc<Inner<T>>,
+    inner: Arc<Inner<U, T>>,
     _spooky: PhantomData<U>,
 }
 
-impl<U: ReplicaUpcalls, T: Transport> Clone for Client<U, T> {
+impl<U: ReplicaUpcalls, T: Transport<U>> Clone for Client<U, T> {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
@@ -55,18 +55,18 @@ impl<U: ReplicaUpcalls, T: Transport> Clone for Client<U, T> {
     }
 }
 
-struct Inner<T: Transport> {
+struct Inner<U: ReplicaUpcalls, T: Transport<U>> {
     transport: T,
-    sync: Mutex<SyncInner<T>>,
+    sync: Mutex<SyncInner<U, T>>,
 }
 
-struct SyncInner<T: Transport> {
+struct SyncInner<U: ReplicaUpcalls, T: Transport<U>> {
     operation_counter: u64,
-    membership: Membership<T>,
+    membership: Membership<T::Address>,
     recent: ViewNumber,
 }
 
-impl<T: Transport> SyncInner<T> {
+impl<U: ReplicaUpcalls, T: Transport<U>> SyncInner<U, T> {
     fn next_number(&mut self) -> u64 {
         let ret = self.operation_counter;
         self.operation_counter += 1;
@@ -74,8 +74,8 @@ impl<T: Transport> SyncInner<T> {
     }
 }
 
-impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
-    pub fn new(membership: Membership<T>, transport: T) -> Self {
+impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
+    pub fn new(membership: Membership<T::Address>, transport: T) -> Self {
         Self {
             id: Id::new(),
             inner: Arc::new(Inner {
@@ -100,7 +100,7 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
 
     fn notify_old_views(
         transport: &T,
-        sync: &mut SyncInner<T>,
+        sync: &mut SyncInner<U, T>,
         views: impl IntoIterator<Item = (ReplicaIndex, ViewNumber)> + Clone,
     ) {
         if let Some(latest_view) = views.clone().into_iter().map(|(_, n)| n).max() {
@@ -109,7 +109,7 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                 if view_number < latest_view {
                     transport.do_send(
                         sync.membership.get(index).unwrap(),
-                        Message::<U>::DoViewChange(DoViewChange {
+                        Message::<U, T>::DoViewChange(DoViewChange {
                             view_number: latest_view,
                             addendum: None,
                         }),

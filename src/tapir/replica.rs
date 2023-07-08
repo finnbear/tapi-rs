@@ -2,8 +2,8 @@ use super::{Key, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::ir::ReplyUnlogged;
 use crate::util::vectorize;
 use crate::{
-    IrClient, IrMembership, IrMembershipSize, IrMessage, IrOpId, IrRecord, IrReplicaIndex,
-    IrReplicaUpcalls, OccPrepareResult, OccStore, OccTransaction, OccTransactionId, Transport,
+    IrClient, IrMembership, IrMembershipSize, IrOpId, IrRecord, IrReplicaIndex, IrReplicaUpcalls,
+    OccPrepareResult, OccStore, OccTransaction, OccTransactionId, Transport,
 };
 use serde::{Deserialize, Serialize};
 use std::task::Context;
@@ -52,11 +52,11 @@ impl<K: Key, V: Value> Replica<K, V> {
         }
     }
 
-    fn recover_coordination<T: Transport<Message = IrMessage<Self>>>(
+    fn recover_coordination<T: Transport<Self>>(
         transaction_id: OccTransactionId,
         transaction: OccTransaction<K, V, Timestamp>,
         commit: Timestamp,
-        membership: IrMembership<T>,
+        membership: IrMembership<T::Address>,
         transport: T,
     ) -> impl Future<Output = ()> {
         eprintln!("trying to recover {transaction_id:?}");
@@ -574,11 +574,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
         ret
     }
 
-    fn tick<T: Transport<Message = IrMessage<Self>>>(
-        &mut self,
-        membership: &IrMembership<T>,
-        transport: &T,
-    ) {
+    fn tick<T: Transport<Self>>(&mut self, membership: &IrMembership<T::Address>, transport: &T) {
         eprintln!(
             "there are {} prepared transactions",
             self.inner.prepared.len()

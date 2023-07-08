@@ -1,3 +1,4 @@
+use crate::{IrMessage, IrReplicaUpcalls};
 pub use channel::{Channel, Registry as ChannelRegistry};
 pub use message::Message;
 use serde::{de::DeserializeOwned, Serialize};
@@ -10,10 +11,9 @@ use std::{
 mod channel;
 mod message;
 
-pub trait Transport: Clone + Send + Sync + 'static {
+pub trait Transport<U: IrReplicaUpcalls>: Clone + Send + Sync + 'static {
     type Address: Copy + Eq + Debug + Send + 'static;
     type Sleep: Future<Output = ()> + Send;
-    type Message: Message;
 
     /// Get own address.
     fn address(&self) -> Self::Address;
@@ -44,12 +44,12 @@ pub trait Transport: Clone + Send + Sync + 'static {
     fn persisted<T: DeserializeOwned>(&self, key: &str) -> Option<T>;
 
     /// Send/retry, ignoring any errors, until there is a reply.
-    fn send<R: TryFrom<Self::Message> + Send + Debug>(
+    fn send<R: TryFrom<IrMessage<U, Self>> + Send + Debug>(
         &self,
         address: Self::Address,
-        message: impl Into<Self::Message> + Debug,
+        message: impl Into<IrMessage<U, Self>> + Debug,
     ) -> impl Future<Output = R> + Send + 'static;
 
     /// Send once and don't wait for a reply.
-    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + Debug);
+    fn do_send(&self, address: Self::Address, message: impl Into<IrMessage<U, Self>> + Debug);
 }

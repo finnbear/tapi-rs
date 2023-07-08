@@ -1,4 +1,5 @@
-use super::{Message, Transport};
+use super::Transport;
+use crate::{IrMessage, IrReplicaUpcalls};
 use rand::{thread_rng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -12,11 +13,11 @@ use std::{
 
 const LOG: bool = true;
 
-pub struct Registry<M> {
-    inner: Arc<RwLock<Inner<M>>>,
+pub struct Registry<U: IrReplicaUpcalls> {
+    inner: Arc<RwLock<Inner<U>>>,
 }
 
-impl<M> Default for Registry<M> {
+impl<M: IrReplicaUpcalls> Default for Registry<M> {
     fn default() -> Self {
         Self {
             inner: Default::default(),
@@ -24,12 +25,18 @@ impl<M> Default for Registry<M> {
     }
 }
 
-struct Inner<M> {
+struct Inner<U: IrReplicaUpcalls> {
     #[allow(clippy::type_complexity)]
-    callbacks: Vec<Arc<dyn Fn(usize, M) -> Option<M> + Send + Sync>>,
+    callbacks: Vec<
+        Arc<
+            dyn Fn(usize, IrMessage<U, Channel<U>>) -> Option<IrMessage<U, Channel<U>>>
+                + Send
+                + Sync,
+        >,
+    >,
 }
 
-impl<M> Default for Inner<M> {
+impl<U: IrReplicaUpcalls> Default for Inner<U> {
     fn default() -> Self {
         Self {
             callbacks: Vec::new(),
@@ -37,11 +44,14 @@ impl<M> Default for Inner<M> {
     }
 }
 
-impl<M> Registry<M> {
+impl<U: IrReplicaUpcalls> Registry<U> {
     pub fn channel(
         &self,
-        callback: impl Fn(usize, M) -> Option<M> + Send + Sync + 'static,
-    ) -> Channel<M> {
+        callback: impl Fn(usize, IrMessage<U, Channel<U>>) -> Option<IrMessage<U, Channel<U>>>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Channel<U> {
         let mut inner = self.inner.write().unwrap();
         let address = inner.callbacks.len();
         inner.callbacks.push(Arc::new(callback));
@@ -53,13 +63,13 @@ impl<M> Registry<M> {
     }
 }
 
-pub struct Channel<M> {
+pub struct Channel<U: IrReplicaUpcalls> {
     address: usize,
     persistent: Arc<Mutex<HashMap<String, String>>>,
-    inner: Arc<RwLock<Inner<M>>>,
+    inner: Arc<RwLock<Inner<U>>>,
 }
 
-impl<M> Clone for Channel<M> {
+impl<U: IrReplicaUpcalls> Clone for Channel<U> {
     fn clone(&self) -> Self {
         Self {
             address: self.address,
@@ -69,7 +79,7 @@ impl<M> Clone for Channel<M> {
     }
 }
 
-impl<M: Message> Channel<M> {
+impl<U: IrReplicaUpcalls> Channel<U> {
     #[allow(unused_variables)]
     fn should_drop(from: usize, to: usize) -> bool {
         //return false;
@@ -78,17 +88,16 @@ impl<M: Message> Channel<M> {
         rand::thread_rng().gen_bool(1.0 / 5.0)
     }
 
-    fn random_delay(range: Range<u64>) -> <Self as Transport>::Sleep {
+    fn random_delay(range: Range<u64>) -> <Self as Transport<U>>::Sleep {
         Self::sleep(std::time::Duration::from_millis(
             thread_rng().gen_range(range),
         ))
     }
 }
 
-impl<M: Message> Transport for Channel<M> {
+impl<U: IrReplicaUpcalls> Transport<U> for Channel<U> {
     type Address = usize;
     type Sleep = tokio::time::Sleep;
-    type Message = M;
 
     fn address(&self) -> Self::Address {
         self.address
@@ -136,10 +145,10 @@ impl<M: Message> Transport for Channel<M> {
             .and_then(|value| serde_json::from_str(value).ok())
     }
 
-    fn send<R: TryFrom<M> + Send + Debug>(
+    fn send<R: TryFrom<IrMessage<U, Self>> + Send + Debug>(
         &self,
         address: Self::Address,
-        message: impl Into<Self::Message> + Debug,
+        message: impl Into<IrMessage<U, Self>> + Debug,
     ) -> impl Future<Output = R> + 'static {
         let from: usize = self.address;
         if LOG {
@@ -179,7 +188,7 @@ impl<M: Message> Transport for Channel<M> {
         }
     }
 
-    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + Debug) {
+    fn do_send(&self, address: Self::Address, message: impl Into<IrMessage<U, Self>> + Debug) {
         let from = self.address;
         let should_drop = Self::should_drop(self.address, address);
         if LOG {

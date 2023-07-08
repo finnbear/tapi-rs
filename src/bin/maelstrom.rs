@@ -26,7 +26,7 @@ use tokio::spawn;
 
 type K = String;
 type V = String;
-type Message = IrMessage<TapirReplica<K, V>>;
+type Message = IrMessage<TapirReplica<K, V>, Maelstrom>;
 
 #[derive(Default)]
 struct KvNode {
@@ -99,9 +99,8 @@ impl FromStr for IdEnum {
     }
 }
 
-impl Transport for Maelstrom {
+impl Transport<TapirReplica<K, V>> for Maelstrom {
     type Address = IdEnum;
-    type Message = Message;
     type Sleep = tokio::time::Sleep;
 
     fn address(&self) -> Self::Address {
@@ -129,10 +128,10 @@ impl Transport for Maelstrom {
         tokio::time::sleep(duration)
     }
 
-    fn send<R: TryFrom<Self::Message> + Send + std::fmt::Debug>(
+    fn send<R: TryFrom<IrMessage<TapirReplica<K, V>, Self>> + Send + std::fmt::Debug>(
         &self,
         address: Self::Address,
-        message: impl Into<Self::Message> + std::fmt::Debug,
+        message: impl Into<IrMessage<TapirReplica<K, V>, Self>> + std::fmt::Debug,
     ) -> impl futures::Future<Output = R> + Send + 'static {
         let id = self.id;
         let (sender, mut receiver) = tokio::sync::oneshot::channel();
@@ -171,7 +170,11 @@ impl Transport for Maelstrom {
         }
     }
 
-    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + std::fmt::Debug) {
+    fn do_send(
+        &self,
+        address: Self::Address,
+        message: impl Into<IrMessage<TapirReplica<K, V>, Self>> + std::fmt::Debug,
+    ) {
         let message = Wrapper {
             message: message.into(),
             do_reply_to: None,

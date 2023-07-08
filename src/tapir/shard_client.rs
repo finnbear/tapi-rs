@@ -1,7 +1,7 @@
 use super::{Key, Replica, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::{
-    transport::Transport, IrClient, IrClientId, IrMembership, IrMessage, OccPrepareResult,
-    OccTransaction, OccTransactionId,
+    transport::Transport, IrClient, IrClientId, IrMembership, OccPrepareResult, OccTransaction,
+    OccTransactionId,
 };
 use std::{
     collections::HashMap,
@@ -9,12 +9,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub struct ShardClient<K: Key, V: Value, T: Transport> {
+pub struct ShardClient<K: Key, V: Value, T: Transport<Replica<K, V>>> {
     inner: IrClient<Replica<K, V>, T>,
 }
 
-impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardClient<K, V, T> {
-    pub fn new(membership: IrMembership<T>, transport: T) -> Self {
+impl<K: Key, V: Value, T: Transport<Replica<K, V>>> ShardClient<K, V, T> {
+    pub fn new(membership: IrMembership<T::Address>, transport: T) -> Self {
         Self {
             inner: IrClient::new(membership, transport),
         }
@@ -30,12 +30,12 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardCl
     }
 }
 
-pub struct ShardTransaction<K: Key, V: Value, T: Transport> {
+pub struct ShardTransaction<K: Key, V: Value, T: Transport<Replica<K, V>>> {
     pub client: IrClient<Replica<K, V>, T>,
     inner: Arc<Mutex<Inner<K, V>>>,
 }
 
-impl<K: Key, V: Value, T: Transport> Clone for ShardTransaction<K, V, T> {
+impl<K: Key, V: Value, T: Transport<Replica<K, V>>> Clone for ShardTransaction<K, V, T> {
     fn clone(&self) -> Self {
         Self {
             client: self.client.clone(),
@@ -50,7 +50,7 @@ struct Inner<K: Key, V: Value> {
     read_cache: HashMap<K, Option<V>>,
 }
 
-impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> ShardTransaction<K, V, T> {
+impl<K: Key, V: Value, T: Transport<Replica<K, V>>> ShardTransaction<K, V, T> {
     fn new(client: IrClient<Replica<K, V>, T>, id: OccTransactionId) -> Self {
         Self {
             client,

@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use super::ClientId;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]

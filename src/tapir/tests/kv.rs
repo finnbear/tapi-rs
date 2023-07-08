@@ -3,8 +3,8 @@ use rand::{thread_rng, Rng};
 use tokio::time::timeout;
 
 use crate::{
-    ChannelRegistry, ChannelTransport, IrMembership, IrMessage, IrReplica, IrReplicaIndex,
-    TapirClient, TapirReplica, TapirTimestamp, Transport as _,
+    ChannelRegistry, ChannelTransport, IrMembership, IrReplica, IrReplicaIndex, TapirClient,
+    TapirReplica, TapirTimestamp, Transport as _,
 };
 use std::{
     sync::{
@@ -16,16 +16,15 @@ use std::{
 
 type K = i64;
 type V = i64;
-type Message = IrMessage<TapirReplica<K, V>>;
-type Transport = ChannelTransport<Message>;
+type Transport = ChannelTransport<TapirReplica<K, V>>;
 
 fn build_kv(
     linearizable: bool,
     num_replicas: usize,
     num_clients: usize,
 ) -> (
-    Vec<Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<Message>>>>,
-    Vec<Arc<TapirClient<K, V, ChannelTransport<Message>>>>,
+    Vec<Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<TapirReplica<K, V>>>>>,
+    Vec<Arc<TapirClient<K, V, ChannelTransport<TapirReplica<K, V>>>>>,
 ) {
     println!("---------------------------");
     println!(" linearizable={linearizable} num_replicas={num_replicas}");
@@ -36,12 +35,14 @@ fn build_kv(
 
     fn create_replica(
         index: IrReplicaIndex,
-        registry: &ChannelRegistry<Message>,
-        membership: &IrMembership<ChannelTransport<Message>>,
+        registry: &ChannelRegistry<TapirReplica<K, V>>,
+        membership: &IrMembership<usize>,
         linearizable: bool,
-    ) -> Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<Message>>> {
+    ) -> Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<TapirReplica<K, V>>>> {
         Arc::new_cyclic(
-            |weak: &std::sync::Weak<IrReplica<TapirReplica<K, V>, ChannelTransport<Message>>>| {
+            |weak: &std::sync::Weak<
+                IrReplica<TapirReplica<K, V>, ChannelTransport<TapirReplica<K, V>>>,
+            >| {
                 let weak = weak.clone();
                 let channel =
                     registry.channel(move |from, message| weak.upgrade()?.receive(from, message));
@@ -56,9 +57,9 @@ fn build_kv(
         .collect::<Vec<_>>();
 
     fn create_client(
-        registry: &ChannelRegistry<Message>,
-        membership: &IrMembership<ChannelTransport<Message>>,
-    ) -> Arc<TapirClient<K, V, ChannelTransport<Message>>> {
+        registry: &ChannelRegistry<TapirReplica<K, V>>,
+        membership: &IrMembership<usize>,
+    ) -> Arc<TapirClient<K, V, ChannelTransport<TapirReplica<K, V>>>> {
         let channel = registry.channel(move |_, _| unreachable!());
         Arc::new(TapirClient::new(membership.clone(), channel))
     }

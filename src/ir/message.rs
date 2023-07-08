@@ -1,19 +1,20 @@
-use super::{
-    record::RecordImpl, OpId, RecordEntryState, ReplicaIndex, ReplicaUpcalls, ViewNumber,
-};
+use crate::Transport;
+
+use super::{record::RecordImpl, OpId, RecordEntryState, ReplicaIndex, ReplicaUpcalls, ViewNumber};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-pub type Message<U> = MessageImpl<
+pub type Message<U, T> = MessageImpl<
     <U as ReplicaUpcalls>::UO,
     <U as ReplicaUpcalls>::UR,
     <U as ReplicaUpcalls>::IO,
     <U as ReplicaUpcalls>::CO,
     <U as ReplicaUpcalls>::CR,
+    <T as Transport<U>>::Address,
 >;
 
 #[derive(Clone, derive_more::From, derive_more::TryInto, Serialize, Deserialize)]
-pub enum MessageImpl<UO, UR, IO, CO, CR> {
+pub enum MessageImpl<UO, UR, IO, CO, CR, A> {
     RequestUnlogged(RequestUnlogged<UO>),
     ReplyUnlogged(ReplyUnlogged<UR>),
     ProposeInconsistent(ProposeInconsistent<IO>),
@@ -25,10 +26,11 @@ pub enum MessageImpl<UO, UR, IO, CO, CR> {
     Confirm(Confirm),
     DoViewChange(DoViewChange<IO, CO, CR>),
     StartView(StartView<IO, CO, CR>),
+    _Spooky(std::marker::PhantomData<A>),
 }
 
-impl<UO: Debug, UR: Debug, IO: Debug, CO: Debug, CR: Debug> Debug
-    for MessageImpl<UO, UR, IO, CO, CR>
+impl<UO: Debug, UR: Debug, IO: Debug, CO: Debug, CR: Debug, A: Debug> Debug
+    for MessageImpl<UO, UR, IO, CO, CR, A>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -43,6 +45,7 @@ impl<UO: Debug, UR: Debug, IO: Debug, CO: Debug, CR: Debug> Debug
             Self::Confirm(r) => Debug::fmt(r, f),
             Self::DoViewChange(r) => Debug::fmt(r, f),
             Self::StartView(r) => Debug::fmt(r, f),
+            Self::_Spooky(_) => unreachable!(),
         }
     }
 }

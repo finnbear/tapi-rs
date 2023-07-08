@@ -72,22 +72,18 @@ pub trait Upcalls: Sized + Send + Serialize + DeserializeOwned + 'static {
         d: HashMap<OpId, (Self::CO, Self::CR)>,
         u: Vec<(OpId, Self::CO, Self::CR)>,
     ) -> HashMap<OpId, Self::CR>;
-    fn tick<T: Transport<Message = Message<Self>>>(
-        &mut self,
-        membership: &Membership<T>,
-        transport: &T,
-    ) {
+    fn tick<T: Transport<Self>>(&mut self, membership: &Membership<T::Address>, transport: &T) {
         let _ = (membership, transport);
         // No-op.
     }
 }
 
-pub struct Replica<U: Upcalls, T: Transport<Message = Message<U>>> {
+pub struct Replica<U: Upcalls, T: Transport<U>> {
     index: Index,
     inner: Arc<Inner<U, T>>,
 }
 
-impl<U: Upcalls, T: Transport<Message = Message<U>>> Debug for Replica<U, T> {
+impl<U: Upcalls, T: Transport<U>> Debug for Replica<U, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Replica");
         if let Ok(sync) = self.inner.sync.try_lock() {
@@ -101,14 +97,14 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Debug for Replica<U, T> {
     }
 }
 
-struct Inner<U: Upcalls, T: Transport<Message = Message<U>>> {
+struct Inner<U: Upcalls, T: Transport<U>> {
     transport: T,
-    sync: Mutex<Sync<U, T>>,
+    sync: Mutex<Sync<U, T::Address>>,
 }
 
-struct Sync<U: Upcalls, T: Transport<Message = Message<U>>> {
+struct Sync<U: Upcalls, A> {
     status: Status,
-    view: View<T>,
+    view: View<A>,
     latest_normal_view: ViewNumber,
     changed_view_recently: bool,
     upcalls: U,
@@ -124,10 +120,10 @@ struct PersistentViewInfo {
     latest_normal_view: ViewNumber,
 }
 
-impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
+impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
     const VIEW_CHANGE_INTERVAL: Duration = Duration::from_secs(4);
 
-    pub fn new(index: Index, membership: Membership<T>, upcalls: U, transport: T) -> Self {
+    pub fn new(index: Index, membership: Membership<T::Address>, upcalls: U, transport: T) -> Self {
         let ret = Self {
             index,
             inner: Arc::new(Inner {
@@ -179,7 +175,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
         format!("ir_replica_{}", self.index.0)
     }
 
-    fn persist_view_info(&self, sync: &Sync<U, T>) {
+    fn persist_view_info(&self, sync: &Sync<U, T::Address>) {
         if sync.view.membership.len() == 1 {
             return;
         }
@@ -248,7 +244,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
         });
     }
 
-    fn broadcast_do_view_change(my_index: Index, transport: &T, sync: &mut Sync<U, T>) {
+    fn broadcast_do_view_change(my_index: Index, transport: &T, sync: &mut Sync<U, T::Address>) {
         sync.changed_view_recently = true;
         for (index, address) in &sync.view.membership {
             if index == my_index {
@@ -256,7 +252,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
             }
             transport.do_send(
                 address,
-                Message::<U>::DoViewChange(DoViewChange {
+                Message::<U, T>::DoViewChange(DoViewChange {
                     view_number: sync.view.number,
                     addendum: (index == sync.view.leader_index()).then(|| ViewChangeAddendum {
                         record: sync.record.clone(),
@@ -268,7 +264,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
         }
     }
 
-    pub fn receive(&self, address: T::Address, message: Message<U>) -> Option<Message<U>> {
+    pub fn receive(&self, address: T::Address, message: Message<U, T>) -> Option<Message<U, T>> {
         let mut sync = self.inner.sync.lock().unwrap();
         let sync = &mut *sync;
 
@@ -277,10 +273,10 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
         }
 
         match message {
-            Message::<U>::RequestUnlogged(RequestUnlogged { op }) => {
+            Message::<U, T>::RequestUnlogged(RequestUnlogged { op }) => {
                 if sync.status.is_normal() {
                     let result = sync.upcalls.exec_unlogged(op);
-                    return Some(Message::<U>::ReplyUnlogged(ReplyUnlogged {
+                    return Some(Message::<U, T>::ReplyUnlogged(ReplyUnlogged {
                         result,
                         view_number: sync.view.number,
                     }));
@@ -288,11 +284,11 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                     eprintln!("{:?} abnormal", self.index);
                 }
             }
-            Message::<U>::ProposeInconsistent(ProposeInconsistent { op_id, op, recent }) => {
+            Message::<U, T>::ProposeInconsistent(ProposeInconsistent { op_id, op, recent }) => {
                 if sync.status.is_normal() {
                     if !recent.is_recent_relative_to(sync.view.number) {
                         eprintln!("ancient relative to {:?}", sync.view.number);
-                        return Some(Message::<U>::ReplyInconsistent(ReplyInconsistent {
+                        return Some(Message::<U, T>::ReplyInconsistent(ReplyInconsistent {
                             op_id,
                             view_number: sync.view.number,
                             state: None,
@@ -312,18 +308,18 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                         }
                     };
 
-                    return Some(Message::<U>::ReplyInconsistent(ReplyInconsistent {
+                    return Some(Message::<U, T>::ReplyInconsistent(ReplyInconsistent {
                         op_id,
                         view_number: sync.view.number,
                         state: Some(state),
                     }));
                 }
             }
-            Message::<U>::ProposeConsensus(ProposeConsensus { op_id, op, recent }) => {
+            Message::<U, T>::ProposeConsensus(ProposeConsensus { op_id, op, recent }) => {
                 if sync.status.is_normal() {
                     if !recent.is_recent_relative_to(sync.view.number) {
                         eprintln!("ancient relative to {:?}", sync.view.number);
-                        return Some(Message::<U>::ReplyConsensus(ReplyConsensus {
+                        return Some(Message::<U, T>::ReplyConsensus(ReplyConsensus {
                             op_id,
                             view_number: sync.view.number,
                             result_state: None,
@@ -345,7 +341,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                         }
                     };
 
-                    return Some(Message::<U>::ReplyConsensus(ReplyConsensus {
+                    return Some(Message::<U, T>::ReplyConsensus(ReplyConsensus {
                         op_id,
                         view_number: sync.view.number,
                         result_state: Some((result, state)),
@@ -354,13 +350,13 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                     eprintln!("{:?} abnormal", self.index);
                 }
             }
-            Message::<U>::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
+            Message::<U, T>::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
                 if sync.status.is_normal() && let Some(entry) = sync.record.inconsistent.get_mut(&op_id) && entry.state.is_tentative() {
                     entry.state = RecordEntryState::Finalized(sync.view.number);
                     sync.upcalls.exec_inconsistent(&entry.op);
                 }
             }
-            Message::<U>::FinalizeConsensus(FinalizeConsensus { op_id, result }) => {
+            Message::<U, T>::FinalizeConsensus(FinalizeConsensus { op_id, result }) => {
                 if sync.status.is_normal() {
                     if let Some(entry) = sync.record.consensus.get_mut(&op_id) {
                         // Don't allow a late `FinalizeConsensus` to overwrite
@@ -376,14 +372,14 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
 
                         // Send `Confirm` regardless; the view number gives the
                         // client enough information to retry if needed.
-                        return Some(Message::<U>::Confirm(Confirm {
+                        return Some(Message::<U, T>::Confirm(Confirm {
                             op_id,
                             view_number: sync.view.number,
                         }));
                     }
                 }
             }
-            Message::<U>::DoViewChange(msg) => {
+            Message::<U, T>::DoViewChange(msg) => {
                 if msg.view_number > sync.view.number
                     || (msg.view_number == sync.view.number && sync.status.is_view_changing())
                 {
@@ -594,7 +590,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                                 }
                                 self.inner.transport.do_send(
                                     address,
-                                    Message::<U>::StartView(StartView {
+                                    Message::<U, T>::StartView(StartView {
                                         record: sync.record.clone(),
                                         view_number: sync.view.number,
                                     }),
@@ -608,7 +604,7 @@ impl<U: Upcalls, T: Transport<Message = Message<U>>> Replica<U, T> {
                     }
                 }
             }
-            Message::<U>::StartView(StartView {
+            Message::<U, T>::StartView(StartView {
                 record: new_record,
                 view_number,
             }) => {

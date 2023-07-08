@@ -1,7 +1,6 @@
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
-    IrMessage, IrOpId, IrRecord, IrReplica, IrReplicaIndex,
-    IrReplicaUpcalls, Transport,
+    IrOpId, IrRecord, IrReplica, IrReplicaIndex, IrReplicaUpcalls, Transport,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -44,8 +43,6 @@ async fn lock_server(num_replicas: usize) {
         Ok,
         No,
     }
-
-    type Message = IrMessage<Upcalls>;
 
     #[derive(Serialize, Deserialize)]
     struct Upcalls {
@@ -133,11 +130,11 @@ async fn lock_server(num_replicas: usize) {
 
     fn create_replica(
         index: IrReplicaIndex,
-        registry: &ChannelRegistry<Message>,
-        membership: &IrMembership<ChannelTransport<Message>>,
-    ) -> Arc<IrReplica<Upcalls, ChannelTransport<Message>>> {
+        registry: &ChannelRegistry<Upcalls>,
+        membership: &IrMembership<usize>,
+    ) -> Arc<IrReplica<Upcalls, ChannelTransport<Upcalls>>> {
         Arc::new_cyclic(
-            |weak: &std::sync::Weak<IrReplica<Upcalls, ChannelTransport<Message>>>| {
+            |weak: &std::sync::Weak<IrReplica<Upcalls, ChannelTransport<Upcalls>>>| {
                 let weak = weak.clone();
                 let channel =
                     registry.channel(move |from, message| weak.upgrade()?.receive(from, message));
@@ -152,9 +149,9 @@ async fn lock_server(num_replicas: usize) {
         .collect::<Vec<_>>();
 
     fn create_client(
-        registry: &ChannelRegistry<Message>,
-        membership: &IrMembership<ChannelTransport<Message>>,
-    ) -> Arc<IrClient<Upcalls, ChannelTransport<Message>>> {
+        registry: &ChannelRegistry<Upcalls>,
+        membership: &IrMembership<usize>,
+    ) -> Arc<IrClient<Upcalls, ChannelTransport<Upcalls>>> {
         let channel = registry.channel(move |_, _| unreachable!());
         Arc::new(IrClient::new(membership.clone(), channel))
     }
@@ -192,7 +189,7 @@ async fn lock_server(num_replicas: usize) {
         .await;
 
     for _ in 0..10 {
-        ChannelTransport::<Message>::sleep(Duration::from_secs(5)).await;
+        ChannelTransport::<Upcalls>::sleep(Duration::from_secs(5)).await;
 
         eprintln!("@@@@@ INVOKE {replicas:?}");
         if clients[1]
