@@ -1,4 +1,3 @@
-use super::ReplicaIndex;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -32,15 +31,16 @@ impl<A> Membership<A> {
 }
 
 impl<A: Eq + Copy> Membership<A> {
-    pub fn get(&self, index: ReplicaIndex) -> Option<A> {
-        self.members.get(index.0).cloned()
+    pub fn get(&self, index: usize) -> Option<A> {
+        self.members.get(index).cloned()
     }
 
-    pub fn get_index(&self, address: A) -> Option<ReplicaIndex> {
-        self.members
-            .iter()
-            .position(|a| *a == address)
-            .map(ReplicaIndex)
+    pub fn contains(&self, address: A) -> bool {
+        self.members.contains(&address)
+    }
+
+    pub fn get_index(&self, address: A) -> Option<usize> {
+        self.members.iter().position(|a| *a == address)
     }
 
     #[allow(clippy::type_complexity)]
@@ -48,26 +48,22 @@ impl<A: Eq + Copy> Membership<A> {
         &self,
     ) -> std::iter::Map<
         std::iter::Enumerate<std::slice::Iter<'_, A>>,
-        for<'a> fn((usize, &'a A)) -> (ReplicaIndex, A),
+        for<'a> fn((usize, &'a A)) -> (usize, A),
     > {
         self.into_iter()
     }
 }
 
 impl<A> IntoIterator for Membership<A> {
-    type Item = (ReplicaIndex, A);
-    type IntoIter =
-        std::iter::Map<std::iter::Enumerate<std::vec::IntoIter<A>>, fn((usize, A)) -> Self::Item>;
+    type Item = (usize, A);
+    type IntoIter = std::iter::Enumerate<std::vec::IntoIter<A>>;
     fn into_iter(self) -> Self::IntoIter {
-        self.members
-            .into_iter()
-            .enumerate()
-            .map(|(i, a)| (ReplicaIndex(i), a))
+        self.members.into_iter().enumerate()
     }
 }
 
 impl<'a, A: Copy> IntoIterator for &'a Membership<A> {
-    type Item = (ReplicaIndex, A);
+    type Item = (usize, A);
     type IntoIter = std::iter::Map<
         std::iter::Enumerate<std::slice::Iter<'a, A>>,
         for<'b> fn((usize, &'b A)) -> Self::Item,
@@ -76,7 +72,7 @@ impl<'a, A: Copy> IntoIterator for &'a Membership<A> {
         self.members
             .iter()
             .enumerate()
-            .map(|(i, a)| (ReplicaIndex(i), *a))
+            .map(|(i, a)| (i, *a))
     }
 }
 

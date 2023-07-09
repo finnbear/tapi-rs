@@ -1,6 +1,6 @@
 use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
-    IrOpId, IrRecord, IrReplica, IrReplicaIndex, IrReplicaUpcalls, Transport,
+    IrOpId, IrRecord, IrReplica, IrReplicaUpcalls, Transport,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -144,7 +144,6 @@ async fn lock_server(num_replicas: usize) {
     let membership = IrMembership::new((0..num_replicas).collect::<Vec<_>>());
 
     fn create_replica(
-        index: IrReplicaIndex,
         registry: &ChannelRegistry<Upcalls>,
         membership: &IrMembership<usize>,
     ) -> Arc<IrReplica<Upcalls, ChannelTransport<Upcalls>>> {
@@ -154,13 +153,13 @@ async fn lock_server(num_replicas: usize) {
                 let channel =
                     registry.channel(move |from, message| weak.upgrade()?.receive(from, message));
                 let upcalls = Upcalls { locked: None };
-                IrReplica::new(index, membership.clone(), upcalls, channel)
+                IrReplica::new(membership.clone(), upcalls, channel)
             },
         )
     }
 
-    let replicas = (0..num_replicas)
-        .map(|i| create_replica(IrReplicaIndex(i), &registry, &membership))
+    let replicas = std::iter::repeat_with(|| create_replica(&registry, &membership))
+        .take(num_replicas)
         .collect::<Vec<_>>();
 
     fn create_client(
@@ -171,8 +170,8 @@ async fn lock_server(num_replicas: usize) {
         Arc::new(IrClient::new(membership.clone(), channel))
     }
 
-    let clients = (0..2)
-        .map(|_| create_client(&registry, &membership))
+    let clients = std::iter::repeat_with(|| create_client(&registry, &membership))
+        .take(2)
         .collect::<Vec<_>>();
 
     let decide_lock = |results: HashMap<LockResult, usize>, membership: IrMembershipSize| {

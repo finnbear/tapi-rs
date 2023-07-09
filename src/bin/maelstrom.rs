@@ -19,9 +19,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tapirs::{
-    IrMembership, IrMessage, IrReplica, IrReplicaIndex, TapirClient, TapirReplica, Transport,
-};
+use tapirs::{IrMembership, IrMessage, IrReplica, TapirClient, TapirReplica, Transport};
 use tokio::spawn;
 
 type K = String;
@@ -64,7 +62,7 @@ struct Inner {
     net: ProcNet<LinKv, Wrapper>,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug, Eq, PartialEq, Hash)]
 enum IdEnum {
     Replica(usize),
     App(usize),
@@ -219,8 +217,7 @@ impl Process<LinKv, Wrapper> for KvNode {
         self.inner = Some((
             transport.clone(),
             match id {
-                IdEnum::Replica(index) => KvNodeInner::Replica(Arc::new(IrReplica::new(
-                    IrReplicaIndex(index),
+                IdEnum::Replica(_) => KvNodeInner::Replica(Arc::new(IrReplica::new(
                     membership,
                     TapirReplica::new(true),
                     transport,

@@ -1,7 +1,7 @@
 use super::{
     Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent, Membership, MembershipSize,
-    Message, OpId, ProposeConsensus, ProposeInconsistent, ReplicaIndex, ReplicaUpcalls,
-    ReplyConsensus, ReplyInconsistent, ReplyUnlogged, RequestUnlogged, View, ViewNumber,
+    Message, OpId, ProposeConsensus, ProposeInconsistent, ReplicaUpcalls, ReplyConsensus,
+    ReplyInconsistent, ReplyUnlogged, RequestUnlogged, View, ViewNumber,
 };
 use crate::{
     util::{join, Join},
@@ -105,7 +105,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
     fn update_view<'a>(
         transport: &T,
         sync: &mut SyncInner<U, T>,
-        views: impl IntoIterator<Item = (ReplicaIndex, &'a View<T::Address>)> + Clone,
+        views: impl IntoIterator<Item = (T::Address, &'a View<T::Address>)> + Clone,
     ) {
         if let Some(latest_view) = views
             .clone()
@@ -113,10 +113,10 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
             .map(|(_, n)| n)
             .max_by_key(|v| v.number)
         {
-            for (index, view) in views {
+            for (address, view) in views {
                 if view.number < latest_view.number {
                     transport.do_send(
-                        sync.view.membership.get(index).unwrap(),
+                        address,
                         Message::<U, T>::DoViewChange(DoViewChange {
                             view_number: latest_view.number,
                             addendum: None,
@@ -149,7 +149,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                     let address = sync
                         .view
                         .membership
-                        .get(ReplicaIndex((index + futures.len()) % count))
+                        .get((index + futures.len()) % count)
                         .unwrap();
                     drop(sync);
                     let future = inner.transport.send::<ReplyUnlogged<U::UR, T::Address>>(
@@ -185,15 +185,15 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
         &self,
         op: U::UO,
     ) -> (
-        Join<ReplicaIndex, impl Future<Output = ReplyUnlogged<U::UR, T::Address>>>,
+        Join<T::Address, impl Future<Output = ReplyUnlogged<U::UR, T::Address>>>,
         MembershipSize,
     ) {
         let sync = self.inner.sync.lock().unwrap();
         let membership_size = sync.view.membership.size();
 
-        let future = join(sync.view.membership.iter().map(|(index, address)| {
+        let future = join(sync.view.membership.iter().map(|(_, address)| {
             (
-                index,
+                address,
                 self.inner
                     .transport
                     .send::<ReplyUnlogged<U::UR, T::Address>>(
@@ -219,13 +219,13 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
             }
         };
 
-        fn has_ancient<A>(results: &HashMap<ReplicaIndex, ReplyInconsistent<A>>) -> bool {
+        fn has_ancient<A>(results: &HashMap<A, ReplyInconsistent<A>>) -> bool {
             results.values().any(|v| v.state.is_none())
         }
 
         fn has_quorum<A>(
             membership: MembershipSize,
-            results: &HashMap<ReplicaIndex, ReplyInconsistent<A>>,
+            results: &HashMap<A, ReplyInconsistent<A>>,
             check_views: bool,
         ) -> bool {
             if check_views {
@@ -250,9 +250,9 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                     let sync = inner.sync.lock().unwrap();
                     let membership_size = sync.view.membership.size();
 
-                    let future = join(sync.view.membership.iter().map(|(index, address)| {
+                    let future = join(sync.view.membership.iter().map(|(_, address)| {
                         (
-                            index,
+                            address,
                             inner.transport.send::<ReplyInconsistent<T::Address>>(
                                 address,
                                 ProposeInconsistent {
@@ -273,7 +273,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
 
                 let results = future
                     .until(
-                        move |results: &HashMap<ReplicaIndex, ReplyInconsistent<T::Address>>,
+                        move |results: &HashMap<T::Address, ReplyInconsistent<T::Address>>,
                               cx: &mut Context<'_>| {
                             has_ancient(results)
                                 || has_quorum(
@@ -314,13 +314,11 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
         op: U::CO,
         decide: impl Fn(HashMap<U::CR, usize>, MembershipSize) -> U::CR + Send,
     ) -> impl Future<Output = U::CR> + Send {
-        fn has_ancient<R, A>(replies: &HashMap<ReplicaIndex, ReplyConsensus<R, A>>) -> bool {
+        fn has_ancient<R, A>(replies: &HashMap<A, ReplyConsensus<R, A>>) -> bool {
             replies.values().any(|v| v.result_state.is_none())
         }
 
-        fn get_finalized<R, A>(
-            replies: &HashMap<ReplicaIndex, ReplyConsensus<R, A>>,
-        ) -> Option<&R> {
+        fn get_finalized<R, A>(replies: &HashMap<A, ReplyConsensus<R, A>>) -> Option<&R> {
             replies
                 .values()
                 .find(|r| r.result_state.as_ref().unwrap().1.is_finalized())
@@ -329,7 +327,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
 
         fn get_quorum<R: PartialEq + Debug, A>(
             membership: MembershipSize,
-            replies: &HashMap<ReplicaIndex, ReplyConsensus<R, A>>,
+            replies: &HashMap<A, ReplyConsensus<R, A>>,
             matching_results: bool,
         ) -> Option<(&View<A>, &R)> {
             let required = if matching_results {
@@ -365,9 +363,9 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                     let op_id = OpId { client_id, number };
                     let membership_size = sync.view.membership.size();
 
-                    let future = join(sync.view.membership.iter().map(|(index, address)| {
+                    let future = join(sync.view.membership.iter().map(|(_, address)| {
                         (
-                            index,
+                            address,
                             inner.transport.send::<ReplyConsensus<U::CR, T::Address>>(
                                 address,
                                 ProposeConsensus {
@@ -386,10 +384,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
 
                 let results = future
                     .until(
-                        move |results: &HashMap<
-                            ReplicaIndex,
-                            ReplyConsensus<U::CR, T::Address>,
-                        >,
+                        move |results: &HashMap<T::Address, ReplyConsensus<U::CR, T::Address>>,
                               cx: &mut Context<'_>| {
                             has_ancient(results)
                                 || get_finalized(results).is_some()
@@ -404,9 +399,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                     )
                     .await;
 
-                fn get_quorum_view<A>(
-                    results: &HashMap<ReplicaIndex, Confirm<A>>,
-                ) -> Option<&View<A>> {
+                fn get_quorum_view<A>(results: &HashMap<A, Confirm<A>>) -> Option<&View<A>> {
                     for result in results.values() {
                         let matching = results
                             .values()
@@ -474,9 +467,9 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                             reply_consensus_view.is_none()
                         );
                         */
-                        let future = join(sync.view.membership.iter().map(|(index, address)| {
+                        let future = join(sync.view.membership.iter().map(|(_, address)| {
                             (
-                                index,
+                                address,
                                 inner.transport.send::<Confirm<T::Address>>(
                                     address,
                                     FinalizeConsensus {
@@ -499,7 +492,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                     let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_millis(500)));
                     let results = future
                         .until(
-                            |results: &HashMap<ReplicaIndex, Confirm<T::Address>>,
+                            |results: &HashMap<T::Address, Confirm<T::Address>>,
                              cx: &mut Context<'_>| {
                                 get_quorum_view(results).is_some()
                                     || (soft_timeout.as_mut().poll(cx).is_ready()

@@ -1,6 +1,4 @@
-use super::{
-    record::RecordImpl, OpId, RecordEntryState, ReplicaIndex, ReplicaUpcalls, View, ViewNumber,
-};
+use super::{record::RecordImpl, OpId, RecordEntryState, ReplicaUpcalls, View, ViewNumber};
 use crate::Transport;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -130,8 +128,6 @@ pub struct DoViewChange<IO, CO, CR, A> {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ViewChangeAddendum<IO, CO, CR, A> {
-    /// Sender replica's index.
-    pub replica_index: ReplicaIndex,
     /// Sender replica's record.
     pub record: RecordImpl<IO, CO, CR>,
     /// Latest view in which sender replica had a normal state.
@@ -141,7 +137,6 @@ pub struct ViewChangeAddendum<IO, CO, CR, A> {
 impl<IO, CO, CR, A: Debug> Debug for ViewChangeAddendum<IO, CO, CR, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Addendum")
-            .field("replica_index", &self.replica_index)
             .field("latest_normal_view", &self.latest_normal_view)
             .finish_non_exhaustive()
     }

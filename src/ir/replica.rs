@@ -14,15 +14,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub struct Index(pub usize);
-
-impl Debug for Index {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "R({})", self.0)
-    }
-}
-
 #[derive(Debug)]
 pub enum Status {
     Normal,
@@ -79,7 +70,6 @@ pub trait Upcalls: Sized + Send + Serialize + DeserializeOwned + 'static {
 }
 
 pub struct Replica<U: Upcalls, T: Transport<U>> {
-    index: Index,
     inner: Arc<Inner<U, T>>,
 }
 
@@ -99,19 +89,21 @@ impl<U: Upcalls, T: Transport<U>> Debug for Replica<U, T> {
 
 struct Inner<U: Upcalls, T: Transport<U>> {
     transport: T,
-    sync: Mutex<Sync<U, T::Address>>,
+    sync: Mutex<Sync<U, T>>,
 }
 
-struct Sync<U: Upcalls, A> {
+struct Sync<U: Upcalls, T: Transport<U>> {
     status: Status,
-    view: View<A>,
-    latest_normal_view: View<A>,
+    view: View<T::Address>,
+    latest_normal_view: View<T::Address>,
     changed_view_recently: bool,
     upcalls: U,
     record: Record<U>,
-    outstanding_do_view_changes: HashMap<Index, DoViewChange<U::IO, U::CO, U::CR, A>>,
+    // TODO: GC old replicas.
+    outstanding_do_view_changes: HashMap<T::Address, DoViewChange<U::IO, U::CO, U::CR, T::Address>>,
     /// Last time received message from each peer replica.
-    peer_liveness: HashMap<Index, Instant>,
+    // TODO: GC old replicas.
+    peer_liveness: HashMap<T::Address, Instant>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -123,13 +115,12 @@ struct PersistentViewInfo<A> {
 impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
     const VIEW_CHANGE_INTERVAL: Duration = Duration::from_secs(4);
 
-    pub fn new(index: Index, membership: Membership<T::Address>, upcalls: U, transport: T) -> Self {
+    pub fn new(membership: Membership<T::Address>, upcalls: U, transport: T) -> Self {
         let view = View {
             membership,
             number: ViewNumber(0),
         };
         let ret = Self {
-            index,
             inner: Arc::new(Inner {
                 transport,
                 sync: Mutex::new(Sync {
@@ -156,13 +147,13 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
             sync.latest_normal_view = persistent.latest_normal_view;
             sync.view.number.0 += 1;
 
-            if sync.view.leader_index() == ret.index {
+            if sync.view.leader() == ret.inner.transport.address() {
                 sync.view.number.0 += 1;
             }
 
             ret.persist_view_info(&*sync);
 
-            Self::broadcast_do_view_change(ret.index, &ret.inner.transport, &mut *sync);
+            Self::broadcast_do_view_change( &ret.inner.transport, &mut *sync);
         } else {
             ret.persist_view_info(&*sync);
         }
@@ -173,10 +164,10 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
     }
 
     fn view_info_key(&self) -> String {
-        format!("ir_replica_{}", self.index.0)
+        format!("ir_replica_{}", self.inner.transport.address())
     }
 
-    fn persist_view_info(&self, sync: &Sync<U, T::Address>) {
+    fn persist_view_info(&self, sync: &Sync<U, T>) {
         if sync.view.membership.len() == 1 {
             return;
         }
@@ -190,7 +181,6 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
     }
 
     fn tick(&self) {
-        let my_index = self.index;
         let inner = Arc::downgrade(&self.inner);
         tokio::spawn(async move {
             loop {
@@ -202,7 +192,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                 let mut sync = inner.sync.lock().unwrap();
                 if sync.changed_view_recently {
                     sync.changed_view_recently = false;
-                } else if sync
+                } /* else if sync
                     .peer_liveness
                     .get(&Index(
                         ((sync.view.number.0 + 1) % sync.view.membership.len() as u64) as usize,
@@ -211,18 +201,19 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                     .unwrap_or(false)
                 {
                     // skip this view change.
-                } else {
+                } */ else {
                     if sync.status.is_normal() {
                         sync.status = Status::ViewChanging;
                     }
                     sync.view.number.0 += 1;
 
                     eprintln!(
-                        "{my_index:?} timeout sending do view change {}",
+                        "{:?} timeout sending do view change {}",
+                        inner.transport.address(),
                         sync.view.number.0
                     );
 
-                    Self::broadcast_do_view_change(my_index, &inner.transport, &mut *sync);
+                    Self::broadcast_do_view_change(&inner.transport, &mut *sync);
                 }
             }
         });
@@ -245,19 +236,18 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
         });
     }
 
-    fn broadcast_do_view_change(my_index: Index, transport: &T, sync: &mut Sync<U, T::Address>) {
+    fn broadcast_do_view_change(transport: &T, sync: &mut Sync<U, T>) {
         sync.changed_view_recently = true;
-        for (index, address) in &sync.view.membership {
-            if index == my_index {
+        for (_, address) in &sync.view.membership {
+            if address == transport.address() {
                 continue;
             }
             transport.do_send(
                 address,
                 Message::<U, T>::DoViewChange(DoViewChange {
                     view_number: sync.view.number,
-                    addendum: (index == sync.view.leader_index()).then(|| ViewChangeAddendum {
+                    addendum: (address == sync.view.leader()).then(|| ViewChangeAddendum {
                         record: sync.record.clone(),
-                        replica_index: my_index,
                         latest_normal_view: sync.latest_normal_view.clone(),
                     }),
                 }),
@@ -269,8 +259,8 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
         let mut sync = self.inner.sync.lock().unwrap();
         let sync = &mut *sync;
 
-        if let Some(index) = sync.view.membership.get_index(address) {
-            sync.peer_liveness.insert(index, Instant::now());
+        if sync.view.membership.get_index(address).is_some() {
+            sync.peer_liveness.insert(address, Instant::now());
         }
 
         match message {
@@ -282,7 +272,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                         view: sync.view.clone(),
                     }));
                 } else {
-                    eprintln!("{:?} abnormal", self.index);
+                    eprintln!("{:?} abnormal", self.inner.transport.address());
                 }
             }
             Message::<U, T>::ProposeInconsistent(ProposeInconsistent { op_id, op, recent }) => {
@@ -348,7 +338,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                         result_state: Some((result, state)),
                     }));
                 } else {
-                    eprintln!("{:?} abnormal", self.index);
+                    eprintln!("{:?} abnormal", self.inner.transport.address());
                 }
             }
             Message::<U, T>::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
@@ -391,7 +381,6 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                         }
                         self.persist_view_info(&*sync);
                         Self::broadcast_do_view_change(
-                            self.index,
                             &self.inner.transport,
                             &mut *sync,
                         );
@@ -405,9 +394,9 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                     );
                     */
 
-                    if self.index == sync.view.leader_index() && let Some(addendum) = msg.addendum.as_ref() {
+                    if self.inner.transport.address() == sync.view.leader() && msg.addendum.is_some() {
                         let msg_view_number = msg.view_number;
-                        match sync.outstanding_do_view_changes.entry(addendum.replica_index) {
+                        match sync.outstanding_do_view_changes.entry(address) {
                             Entry::Vacant(vacant) => {
                                 vacant.insert(msg);
                             }
@@ -455,10 +444,10 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                                     sync
                                         .outstanding_do_view_changes
                                         .iter()
-                                        .map(|(i, dvt)| (*i, dvt.view_number, dvt.addendum.as_ref().unwrap().latest_normal_view.number))
+                                        .map(|(a, dvt)| (*a, dvt.view_number, dvt.addendum.as_ref().unwrap().latest_normal_view.number))
                                         .chain(
                                             std::iter::once(
-                                                (self.index, sync.view.number, sync.latest_normal_view.number)
+                                                (self.inner.transport.address(), sync.view.number, sync.latest_normal_view.number)
                                             )
                                         )
                                         .collect::<Vec<_>>()
@@ -586,8 +575,8 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                             sync.view.number = msg_view_number;
                             sync.latest_normal_view.number = msg_view_number;
                             self.persist_view_info(&*sync);
-                            for (index, address) in &sync.view.membership {
-                                if index == self.index {
+                            for (_, address) in &sync.view.membership {
+                                if address == self.inner.transport.address() {
                                     continue;
                                 }
                                 self.inner.transport.do_send(
@@ -613,7 +602,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                 if view.number > sync.view.number
                     || (view.number == sync.view.number || !sync.status.is_normal())
                 {
-                    eprintln!("{:?} starting view {view:?}", self.index);
+                    eprintln!("{:?} starting view {view:?}", self.inner.transport.address());
                     sync.upcalls.sync(&sync.record, &new_record);
                     sync.record = new_record;
                     sync.status = Status::Normal;
@@ -624,23 +613,27 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
             }
             Message::<U, T>::AddMember(AddMember{address}) => {
                 if sync.status.is_normal() && sync.view.membership.get_index(address).is_none() {
-                    // Become the leader before and after new node is added.
-                    while (sync.view.leader_index() != self.index)
-                        || (sync.view.number.0 as usize % (sync.view.membership.len() + 1) != self.index.0) {
-                        sync.view.number.0 += 1
-                    }
-
                     // Add the node.
-                    sync.view.membership = Membership::new(
-                        sync.view.membership
-                            .iter()
-                            .map(|m| m.1)
-                            .chain(std::iter::once(address))
-                            .collect()
-                        );
+                    let mut next = View{
+                        membership: Membership::new(
+                            sync.view.membership
+                                .iter()
+                                .map(|m| m.1)
+                                .chain(std::iter::once(address))
+                                .collect()
+                            ),
+                        number: ViewNumber(sync.view.number.0 + 1)
+                    };
+                    
+                    // Become the leader before and after new node is added.
+                    while (sync.view.leader() != self.inner.transport.address())
+                        || (next.leader() != self.inner.transport.address()) {
+                        next.number.0 += 1;
+                    }
+                    sync.view = next;
 
                     // Election.
-                    Self::broadcast_do_view_change(self.index, &self.inner.transport, sync);
+                    Self::broadcast_do_view_change(&self.inner.transport, sync);
                 }
             }
             _ => {

@@ -3,8 +3,9 @@ pub use channel::{Channel, Registry as ChannelRegistry};
 pub use message::Message;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    fmt::Debug,
+    fmt::{Debug, Display},
     future::Future,
+    hash::Hash,
     time::{Duration, SystemTime},
 };
 
@@ -12,7 +13,7 @@ mod channel;
 mod message;
 
 pub trait Transport<U: IrReplicaUpcalls>: Clone + Send + Sync + 'static {
-    type Address: Copy + Eq + Debug + Send + Serialize + DeserializeOwned + 'static;
+    type Address: Copy + Eq + Hash + Debug + Display + Send + Serialize + DeserializeOwned + 'static;
     type Sleep: Future<Output = ()> + Send;
 
     /// Get own address.

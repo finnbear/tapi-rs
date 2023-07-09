@@ -21,7 +21,5 @@ pub use record::{
     ConsensusEntry as RecordConsensusEntry, Consistency,
     InconsistentEntry as RecordInconsistentEntry, Record, State as RecordEntryState,
 };
-pub use replica::{
-    Index as ReplicaIndex, Replica, Status as ReplicaStatus, Upcalls as ReplicaUpcalls,
-};
+pub use replica::{Replica, Status as ReplicaStatus, Upcalls as ReplicaUpcalls};
 pub use view::{Number as ViewNumber, View};

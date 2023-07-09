@@ -1,4 +1,4 @@
-use super::{Membership, ReplicaIndex};
+use super::{Membership};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -24,7 +24,9 @@ pub struct View<A> {
 }
 
 impl<A: Eq + Copy> View<A> {
-    pub fn leader_index(&self) -> ReplicaIndex {
-        ReplicaIndex((self.number.0 % self.membership.len() as u64) as usize)
+    pub fn leader(&self) -> A {
+        self.membership
+            .get((self.number.0 % self.membership.len() as u64) as usize)
+            .unwrap()
     }
 }

@@ -2,8 +2,8 @@ use super::{Key, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::ir::ReplyUnlogged;
 use crate::util::vectorize;
 use crate::{
-    IrClient, IrMembership, IrMembershipSize, IrOpId, IrRecord, IrReplicaIndex, IrReplicaUpcalls,
-    OccPrepareResult, OccStore, OccTransaction, OccTransactionId, Transport,
+    IrClient, IrMembership, IrMembershipSize, IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult,
+    OccStore, OccTransaction, OccTransactionId, Transport,
 };
 use serde::{Deserialize, Serialize};
 use std::task::Context;
@@ -111,7 +111,7 @@ impl<K: Key, V: Value> Replica<K, V> {
             }
 
             fn decide<V, A>(
-                results: &HashMap<IrReplicaIndex, ReplyUnlogged<UR<V>, A>>,
+                results: &HashMap<A, ReplyUnlogged<UR<V>, A>>,
                 membership: IrMembershipSize,
             ) -> Option<OccPrepareResult<Timestamp>> {
                 let highest_view = results.values().map(|r| r.view.number).max()?;
@@ -156,7 +156,7 @@ impl<K: Key, V: Value> Replica<K, V> {
             let mut timeout = std::pin::pin!(T::sleep(Duration::from_millis(1000)));
             let results = future
                 .until(
-                    |results: &HashMap<IrReplicaIndex, ReplyUnlogged<UR<V>, T::Address>>,
+                    |results: &HashMap<T::Address, ReplyUnlogged<UR<V>, T::Address>>,
                      cx: &mut Context<'_>| {
                         decide(results, membership).is_some()
                             || timeout.as_mut().poll(cx).is_ready()
