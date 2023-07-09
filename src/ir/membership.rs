@@ -1,4 +1,5 @@
 use super::ReplicaIndex;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
 /// Internally stores 'f'
@@ -6,29 +7,33 @@ use std::fmt::Debug;
 pub struct Size(usize);
 
 /// Stores the address of replica group members.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Membership<A> {
     members: Vec<A>,
 }
 
-impl<A: Eq + Copy> Membership<A> {
-    /// Must have an odd number of replicas.
+impl<A> Membership<A> {
+    /// # Panics
+    ///
+    /// If `members` is empty.
     pub fn new(members: Vec<A>) -> Self {
-        assert_eq!(members.len() % 2, 1);
+        assert!(!members.is_empty());
         Self { members }
     }
 
-    pub fn get(&self, index: ReplicaIndex) -> Option<A> {
-        self.members.get(index.0).cloned()
-    }
-
     pub fn size(&self) -> Size {
-        Size((self.members.len() - 1) / 2)
+        Size(self.members.len() / 2)
     }
 
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.members.len()
+    }
+}
+
+impl<A: Eq + Copy> Membership<A> {
+    pub fn get(&self, index: ReplicaIndex) -> Option<A> {
+        self.members.get(index.0).cloned()
     }
 
     pub fn get_index(&self, address: A) -> Option<ReplicaIndex> {
@@ -76,16 +81,26 @@ impl<'a, A: Copy> IntoIterator for &'a Membership<A> {
 }
 
 impl Size {
+    /// One node fewer than a majority.
+    ///
+    /// With an odd number of replicas, this is the maximum
+    /// number of nodes that can fail while preserving liveness.
+    ///
     /// In a replica group of size 3, this is 1.
     pub fn f(&self) -> usize {
         self.0
     }
 
+    /// A majority of nodes.
+    ///
     /// In a replica group of size 3, this is 2.
     pub fn f_plus_one(&self) -> usize {
         self.f() + 1
     }
 
+    /// Minimum number of nodes that guarantees a majority of
+    /// all possible majorities of nodes.
+    ///
     /// In a replica group of size 3, this is 3.
     pub fn three_over_two_f_plus_one(&self) -> usize {
         (self.f() * 3).div_ceil(2) + 1

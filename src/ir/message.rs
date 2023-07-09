@@ -1,6 +1,7 @@
+use super::{
+    record::RecordImpl, OpId, RecordEntryState, ReplicaIndex, ReplicaUpcalls, View, ViewNumber,
+};
 use crate::Transport;
-
-use super::{record::RecordImpl, OpId, RecordEntryState, ReplicaIndex, ReplicaUpcalls, ViewNumber};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -16,17 +17,16 @@ pub type Message<U, T> = MessageImpl<
 #[derive(Clone, derive_more::From, derive_more::TryInto, Serialize, Deserialize)]
 pub enum MessageImpl<UO, UR, IO, CO, CR, A> {
     RequestUnlogged(RequestUnlogged<UO>),
-    ReplyUnlogged(ReplyUnlogged<UR>),
+    ReplyUnlogged(ReplyUnlogged<UR, A>),
     ProposeInconsistent(ProposeInconsistent<IO>),
     ProposeConsensus(ProposeConsensus<CO>),
-    ReplyInconsistent(ReplyInconsistent),
-    ReplyConsensus(ReplyConsensus<CR>),
+    ReplyInconsistent(ReplyInconsistent<A>),
+    ReplyConsensus(ReplyConsensus<CR, A>),
     FinalizeInconsistent(FinalizeInconsistent),
     FinalizeConsensus(FinalizeConsensus<CR>),
-    Confirm(Confirm),
-    DoViewChange(DoViewChange<IO, CO, CR>),
-    StartView(StartView<IO, CO, CR>),
-    _Spooky(std::marker::PhantomData<A>),
+    Confirm(Confirm<A>),
+    DoViewChange(DoViewChange<IO, CO, CR, A>),
+    StartView(StartView<IO, CO, CR, A>),
 }
 
 impl<UO: Debug, UR: Debug, IO: Debug, CO: Debug, CR: Debug, A: Debug> Debug
@@ -45,7 +45,6 @@ impl<UO: Debug, UR: Debug, IO: Debug, CO: Debug, CR: Debug, A: Debug> Debug
             Self::Confirm(r) => Debug::fmt(r, f),
             Self::DoViewChange(r) => Debug::fmt(r, f),
             Self::StartView(r) => Debug::fmt(r, f),
-            Self::_Spooky(_) => unreachable!(),
         }
     }
 }
@@ -56,11 +55,9 @@ pub struct RequestUnlogged<UO> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplyUnlogged<UR> {
+pub struct ReplyUnlogged<UR, A> {
     pub result: UR,
-    /// Current view number, for priming the
-    /// client's ability to send `recent`.
-    pub view_number: ViewNumber,
+    pub view: View<A>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,18 +81,18 @@ pub struct ProposeConsensus<CO> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplyInconsistent {
+pub struct ReplyInconsistent<A> {
     pub op_id: OpId,
-    pub view_number: ViewNumber,
+    pub view: View<A>,
     /// If `None`, the request couldn't be processed because
     /// `recent` wasn't recent.
     pub state: Option<RecordEntryState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplyConsensus<CR> {
+pub struct ReplyConsensus<CR, A> {
     pub op_id: OpId,
-    pub view_number: ViewNumber,
+    pub view: View<A>,
     /// If `None`, the request couldn't be processed because
     /// `recent` wasn't recent.
     pub result_state: Option<(CR, RecordEntryState)>,
@@ -113,31 +110,31 @@ pub struct FinalizeConsensus<CR> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Confirm {
+pub struct Confirm<A> {
     pub op_id: OpId,
-    pub view_number: ViewNumber,
+    pub view: View<A>,
 }
 
 /// Informs a replica about a new view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DoViewChange<IO, CO, CR> {
+pub struct DoViewChange<IO, CO, CR, A> {
     /// View number to change to.
     pub view_number: ViewNumber,
     /// Is `Some` when sent from replica to new leader.
-    pub addendum: Option<ViewChangeAddendum<IO, CO, CR>>,
+    pub addendum: Option<ViewChangeAddendum<IO, CO, CR, A>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ViewChangeAddendum<IO, CO, CR> {
+pub struct ViewChangeAddendum<IO, CO, CR, A> {
     /// Sender replica's index.
     pub replica_index: ReplicaIndex,
     /// Sender replica's record.
     pub record: RecordImpl<IO, CO, CR>,
     /// Latest view in which sender replica had a normal state.
-    pub latest_normal_view: ViewNumber,
+    pub latest_normal_view: View<A>,
 }
 
-impl<IO, CO, CR> Debug for ViewChangeAddendum<IO, CO, CR> {
+impl<IO, CO, CR, A: Debug> Debug for ViewChangeAddendum<IO, CO, CR, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Addendum")
             .field("replica_index", &self.replica_index)
@@ -148,17 +145,17 @@ impl<IO, CO, CR> Debug for ViewChangeAddendum<IO, CO, CR> {
 
 /// From leader to inform a replica that a new view has begun.
 #[derive(Clone, Serialize, Deserialize)]
-pub struct StartView<IO, CO, CR> {
+pub struct StartView<IO, CO, CR, A> {
     /// Leader's merged record.
     pub record: RecordImpl<IO, CO, CR>,
-    /// New view number.
-    pub view_number: ViewNumber,
+    /// New view.
+    pub view: View<A>,
 }
 
-impl<IO, CO, CR> Debug for StartView<IO, CO, CR> {
+impl<IO, CO, CR, A: Debug> Debug for StartView<IO, CO, CR, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StartView")
-            .field("view_number", &self.view_number)
+            .field("view", &self.view)
             .finish_non_exhaustive()
     }
 }

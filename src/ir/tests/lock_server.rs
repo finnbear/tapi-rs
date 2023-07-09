@@ -10,8 +10,23 @@ use std::{
 };
 
 #[tokio::test]
+async fn lock_server_1() {
+    lock_server(1).await;
+}
+
+#[tokio::test]
+async fn lock_server_2() {
+    lock_server(2).await;
+}
+
+#[tokio::test]
 async fn lock_server_3() {
     lock_server(3).await;
+}
+
+#[tokio::test]
+async fn lock_server_4() {
+    lock_server(4).await;
 }
 
 #[tokio::test]

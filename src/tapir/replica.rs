@@ -110,11 +110,11 @@ impl<K: Key, V: Value> Replica<K, V> {
                 return;
             }
 
-            fn decide<V>(
-                results: &HashMap<IrReplicaIndex, ReplyUnlogged<UR<V>>>,
+            fn decide<V, A>(
+                results: &HashMap<IrReplicaIndex, ReplyUnlogged<UR<V>, A>>,
                 membership: IrMembershipSize,
             ) -> Option<OccPrepareResult<Timestamp>> {
-                let highest_view = results.values().map(|r| r.view_number).max()?;
+                let highest_view = results.values().map(|r| r.view.number).max()?;
                 Some(
                     if results
                         .values()
@@ -124,7 +124,7 @@ impl<K: Key, V: Value> Replica<K, V> {
                     } else if results
                         .values()
                         .filter(|r| {
-                            r.view_number == highest_view
+                            r.view.number == highest_view
                                 && matches!(r.result, UR::CheckPrepare(OccPrepareResult::Ok))
                         })
                         .count()
@@ -134,7 +134,7 @@ impl<K: Key, V: Value> Replica<K, V> {
                     } else if results
                         .values()
                         .filter(|r| {
-                            r.view_number == highest_view
+                            r.view.number == highest_view
                                 && matches!(r.result, UR::CheckPrepare(OccPrepareResult::TooLate))
                         })
                         .count()
@@ -156,7 +156,7 @@ impl<K: Key, V: Value> Replica<K, V> {
             let mut timeout = std::pin::pin!(T::sleep(Duration::from_millis(1000)));
             let results = future
                 .until(
-                    |results: &HashMap<IrReplicaIndex, ReplyUnlogged<UR<V>>>,
+                    |results: &HashMap<IrReplicaIndex, ReplyUnlogged<UR<V>, T::Address>>,
                      cx: &mut Context<'_>| {
                         decide(results, membership).is_some()
                             || timeout.as_mut().poll(cx).is_ready()
