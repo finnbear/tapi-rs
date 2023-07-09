@@ -1,6 +1,6 @@
 use super::{
     message::ViewChangeAddendum, Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent,
-    Membership, Message, OpId, ProposeConsensus, ProposeInconsistent, Record, RecordConsensusEntry,
+    Membership, Message, AddMember, OpId, ProposeConsensus, ProposeInconsistent, Record, RecordConsensusEntry,
     RecordEntryState, RecordInconsistentEntry, ReplyConsensus, ReplyInconsistent, ReplyUnlogged,
     RequestUnlogged, StartView, View, ViewNumber,
 };
@@ -620,6 +620,27 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                     sync.view = view.clone();
                     sync.latest_normal_view = view;
                     self.persist_view_info(&*sync);
+                }
+            }
+            Message::<U, T>::AddMember(AddMember{address}) => {
+                if sync.status.is_normal() && sync.view.membership.get_index(address).is_none() {
+                    // Become the leader before and after new node is added.
+                    while (sync.view.leader_index() != self.index)
+                        || (sync.view.number.0 as usize % (sync.view.membership.len() + 1) != self.index.0) {
+                        sync.view.number.0 += 1
+                    }
+
+                    // Add the node.
+                    sync.view.membership = Membership::new(
+                        sync.view.membership
+                            .iter()
+                            .map(|m| m.1)
+                            .chain(std::iter::once(address))
+                            .collect()
+                        );
+
+                    // Election.
+                    Self::broadcast_do_view_change(self.index, &self.inner.transport, sync);
                 }
             }
             _ => {

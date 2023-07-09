@@ -27,6 +27,8 @@ pub enum MessageImpl<UO, UR, IO, CO, CR, A> {
     Confirm(Confirm<A>),
     DoViewChange(DoViewChange<IO, CO, CR, A>),
     StartView(StartView<IO, CO, CR, A>),
+    AddMember(AddMember<A>),
+    RemoveMember(RemoveMember<A>),
 }
 
 impl<UO: Debug, UR: Debug, IO: Debug, CO: Debug, CR: Debug, A: Debug> Debug
@@ -45,6 +47,8 @@ impl<UO: Debug, UR: Debug, IO: Debug, CO: Debug, CR: Debug, A: Debug> Debug
             Self::Confirm(r) => Debug::fmt(r, f),
             Self::DoViewChange(r) => Debug::fmt(r, f),
             Self::StartView(r) => Debug::fmt(r, f),
+            Self::AddMember(r) => Debug::fmt(r, f),
+            Self::RemoveMember(r) => Debug::fmt(r, f),
         }
     }
 }
@@ -158,4 +162,14 @@ impl<IO, CO, CR, A: Debug> Debug for StartView<IO, CO, CR, A> {
             .field("view", &self.view)
             .finish_non_exhaustive()
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AddMember<A> {
+    pub address: A,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoveMember<A> {
+    pub address: A,
 }
