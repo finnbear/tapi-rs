@@ -1,6 +1,9 @@
 test:
 	clear && cargo test --release -- # --nocapture
 
+lock_server_stress_test:
+	clear && cargo test --release -- lock_server_loop --nocapture --include-ignored
+
 coordinator_failure_stress_test_3:
 	clear && cargo test --release -- coordinator_recovery_3_loop --nocapture --include-ignored
 

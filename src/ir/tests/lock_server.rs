@@ -2,7 +2,7 @@ use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
     IrOpId, IrRecord, IrReplica, IrReplicaUpcalls, Transport,
 };
-use rand::{seq::IteratorRandom, thread_rng};
+use rand::{seq::IteratorRandom, thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -43,6 +43,16 @@ async fn lock_server_7() {
 #[tokio::test]
 async fn lock_server_9() {
     lock_server(9).await;
+}
+
+#[ignore]
+#[tokio::test]
+async fn lock_server_loop() {
+    loop {
+        tokio::time::timeout(Duration::from_secs(60), lock_server(3))
+            .await
+            .unwrap();
+    }
 }
 
 async fn lock_server(num_replicas: usize) {
@@ -205,7 +215,7 @@ async fn lock_server(num_replicas: usize) {
         replicas.push(new);
     }
 
-    for i in 0..3 {
+    for i in 0..10 {
         assert_eq!(
             clients[0]
                 .invoke_consensus(Lock(clients[0].id()), &decide_lock)
@@ -214,15 +224,17 @@ async fn lock_server(num_replicas: usize) {
             "{i}"
         );
 
-        let to_remove = replicas
-            .iter()
-            .map(|r| r.address())
-            .choose(&mut thread_rng())
-            .unwrap();
-        for r in replicas.iter() {
-            clients[0]
-                .transport()
-                .do_send(r.address(), crate::ir::RemoveMember { address: to_remove });
+        if thread_rng().gen() {
+            let to_remove = replicas
+                .iter()
+                .map(|r| r.address())
+                .choose(&mut thread_rng())
+                .unwrap();
+            for r in replicas.iter() {
+                clients[0]
+                    .transport()
+                    .do_send(r.address(), crate::ir::RemoveMember { address: to_remove });
+            }
         }
 
         assert_eq!(
@@ -233,8 +245,12 @@ async fn lock_server(num_replicas: usize) {
             "{i}"
         );
 
-        add_replica(&mut replicas, &registry, &membership);
-        add_replica(&mut replicas, &registry, &membership);
+        if thread_rng().gen() {
+            add_replica(&mut replicas, &registry, &membership);
+
+            // Will fail.
+            add_replica(&mut replicas, &registry, &membership);
+        }
     }
 
     clients[0]
