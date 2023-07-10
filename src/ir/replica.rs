@@ -658,27 +658,12 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                     sync.view.number.0 += 3;
 
                     // Add the node.
-                    let mut next = View{
-                        membership: Membership::new(
-                            sync.view.membership
-                                .iter()
-                                .chain(std::iter::once(address))
-                                .collect()
-                            ),
-                        number: sync.view.number
-                    };
-
-                    // Become the leader before and after new node is added.
-                    let mut gov = 0;
-                    while (sync.view.leader() != self.inner.transport.address())
-                        || (next.leader() != self.inner.transport.address()) {
-                        sync.view.number.0 += 1;
-                        next.number.0 += 1;
-                        debug_assert_eq!(sync.view.number, next.number);
-                        gov += 1;
-                        debug_assert!(gov < 1000, "{:?} {:?} {:?}", self.inner.transport.address(), sync.view, next);
-                    }
-                    sync.view = next;
+                    sync.view.membership = Membership::new(
+                        sync.view.membership
+                            .iter()
+                            .chain(std::iter::once(address))
+                            .collect()
+                        );
                     self.persist_view_info(&*sync);
 
                     // Election.
@@ -696,27 +681,12 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                     sync.view.number.0 += 3;
 
                     // Remove the node.
-                    let mut next = View{
-                        membership: Membership::new(
-                            sync.view.membership
-                                .iter()
-                                .filter(|a| *a != address)
-                                .collect()
-                            ),
-                        number: sync.view.number
-                    };
-
-                    // Become the leader before and after new node is removed.
-                    let mut gov = 0;
-                    while (sync.view.leader() != self.inner.transport.address())
-                        || (next.leader() != self.inner.transport.address()) {
-                        sync.view.number.0 += 1;
-                        next.number.0 += 1;
-                        debug_assert_eq!(sync.view.number, next.number);
-                        gov += 1;
-                        debug_assert!(gov < 1000, "{:?} {:?} {:?}", self.inner.transport.address(), sync.view, next);
-                    }
-                    sync.view = next;
+                    sync.view.membership = Membership::new(
+                        sync.view.membership
+                            .iter()
+                            .filter(|a| *a != address)
+                            .collect()
+                        );
                     self.persist_view_info(&*sync);
 
                     // Election.
