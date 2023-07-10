@@ -429,16 +429,18 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                             }
                         }
 
-                        let threshold = sync.latest_normal_view.membership.size().f();
+                        let my_address = self.inner.transport.address();
+                        let synthetic = DoViewChange{ view: sync.view.clone(), addendum: Some(ViewChangeAddendum { record: sync.record.clone(), latest_normal_view: sync.latest_normal_view.clone() }) };
                         let matching = sync
                             .outstanding_do_view_changes
                             .iter()
+                            .chain(std::iter::once((&my_address, &synthetic)))
                             .filter(|(address, other)|
                                 sync.latest_normal_view.membership.contains(**address)
                                 && other.view.number == sync.view.number
                             );
 
-                        if matching.clone().count() >= threshold {
+                        if matching.clone().count() >= sync.latest_normal_view.membership.size().f_plus_one() {
                             eprintln!("{:?} DOING VIEW CHANGE", self.inner.transport.address());
                             {
                                 let latest_normal_view =
@@ -451,7 +453,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                                         .max_by_key(|v| v.number)
                                         .unwrap()
                                 ;
-                                let mut latest_records = matching
+                                let latest_records = matching
                                     .clone()
                                     .filter(|(_, r)| {
                                         r.addendum.as_ref().unwrap().latest_normal_view.number
@@ -459,9 +461,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                                     })
                                     .map(|(_, r)| r.addendum.as_ref().unwrap().record.clone())
                                     .collect::<Vec<_>>();
-                                if sync.latest_normal_view.number == latest_normal_view.number {
-                                    latest_records.push(sync.record.clone());
-                                }
+                        
                                 eprintln!(
                                     "have {} latest ({:?})",
                                     latest_records.len(),
@@ -599,11 +599,11 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                             sync.view.number = msg_view_number;
 
                             let destinations = sync
-            .view
-            .membership
-            .iter()
-            .chain(sync.latest_normal_view.membership.iter())
-            .collect::<HashSet<_>>();
+                                .view
+                                .membership
+                                .iter()
+                                .chain(sync.latest_normal_view.membership.iter())
+                                .collect::<HashSet<_>>();
 
                             sync.latest_normal_view.number = msg_view_number;
                             sync.latest_normal_view.membership = sync.view.membership.clone();
@@ -646,11 +646,14 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                 }
             }
             Message::<U, T>::AddMember(AddMember{address}) => {
+                println!("{:?} recv add member {address:?}", self.inner.transport.address());
                 if sync.status.is_normal() && sync.view.membership.get_index(address).is_none() {
                     if !sync.view.membership.contains(self.inner.transport.address()) {
                         // TODO: Expand coverage.
                         return None;
                     }
+                    println!("{:?} acting on add member {address:?}", self.inner.transport.address());
+
                     sync.status = Status::ViewChanging;
                     sync.view.number.0 += 3;
 
