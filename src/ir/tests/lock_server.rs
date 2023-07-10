@@ -2,6 +2,7 @@ use crate::{
     ChannelRegistry, ChannelTransport, IrClient, IrClientId, IrMembership, IrMembershipSize,
     IrOpId, IrRecord, IrReplica, IrReplicaUpcalls, Transport,
 };
+use rand::{seq::IteratorRandom, thread_rng};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -193,19 +194,13 @@ async fn lock_server(num_replicas: usize) {
         membership: &IrMembership<usize>,
     ) {
         let new = create_replica(&registry, &membership);
-        for d in 0..new.address() {
-            if (membership.len()..membership.len() + 2).contains(&d) {
-                // is a client.
-                continue;
-            }
-            for _i in 0..3 {
-                new.transport().do_send(
-                    d,
-                    crate::ir::AddMember {
-                        address: new.address(),
-                    },
-                );
-            }
+        for d in &*replicas {
+            new.transport().do_send(
+                d.address(),
+                crate::ir::AddMember {
+                    address: new.address(),
+                },
+            );
         }
         replicas.push(new);
     }
@@ -218,6 +213,18 @@ async fn lock_server(num_replicas: usize) {
             LockResult::Ok,
             "{i}"
         );
+
+        let to_remove = replicas
+            .iter()
+            .map(|r| r.address())
+            .choose(&mut thread_rng())
+            .unwrap();
+        for r in replicas.iter() {
+            clients[0]
+                .transport()
+                .do_send(r.address(), crate::ir::RemoveMember { address: to_remove });
+        }
+
         assert_eq!(
             clients[1]
                 .invoke_consensus(Lock(clients[1].id()), &decide_lock)

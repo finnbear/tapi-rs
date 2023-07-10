@@ -1,7 +1,7 @@
 use super::{
     message::ViewChangeAddendum, AddMember, Confirm, DoViewChange, FinalizeConsensus,
     FinalizeInconsistent, Membership, Message, OpId, ProposeConsensus, ProposeInconsistent, Record,
-    RecordConsensusEntry, RecordEntryState, RecordInconsistentEntry, ReplyConsensus,
+    RecordConsensusEntry, RecordEntryState, RecordInconsistentEntry, RemoveMember, ReplyConsensus,
     ReplyInconsistent, ReplyUnlogged, RequestUnlogged, StartView, View, ViewNumber,
 };
 use crate::{Transport, TransportMessage};
@@ -646,6 +646,42 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                     };
 
                     // Become the leader before and after new node is added.
+                    let mut gov = 0;
+                    while (sync.view.leader() != self.inner.transport.address())
+                        || (next.leader() != self.inner.transport.address()) {
+                        sync.view.number.0 += 1;
+                        next.number.0 += 1;
+                        debug_assert_eq!(sync.view.number, next.number);
+                        gov += 1;
+                        debug_assert!(gov < 1000, "{:?} {:?} {:?}", self.inner.transport.address(), sync.view, next);
+                    }
+                    sync.view = next;
+                    self.persist_view_info(&*sync);
+
+                    // Election.
+                    Self::broadcast_do_view_change(&self.inner.transport, sync);
+                }
+            }
+            Message::<U, T>::RemoveMember(RemoveMember{address}) => {
+                if sync.status.is_normal() && sync.view.membership.get_index(address).is_some() && sync.view.membership.len() > 1 && address != self.inner.transport.address() {
+                    if !sync.view.membership.contains(self.inner.transport.address()) {
+                        return None;
+                    }
+                    sync.status = Status::ViewChanging;
+                    sync.view.number.0 += 3;
+
+                    // Remove the node.
+                    let mut next = View{
+                        membership: Membership::new(
+                            sync.view.membership
+                                .iter()
+                                .filter(|a| *a != address)
+                                .collect()
+                            ),
+                        number: sync.view.number
+                    };
+
+                    // Become the leader before and after new node is removed.
                     let mut gov = 0;
                     while (sync.view.leader() != self.inner.transport.address())
                         || (next.leader() != self.inner.transport.address()) {
