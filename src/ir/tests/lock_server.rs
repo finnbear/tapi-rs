@@ -257,7 +257,7 @@ async fn lock_server(num_replicas: usize) {
         .invoke_inconsistent(Unlock(clients[0].id()))
         .await;
 
-    for _ in 0..16 {
+    for _ in 0..(replicas.len() + 1) * 10 {
         ChannelTransport::<Upcalls>::sleep(Duration::from_secs(5)).await;
 
         eprintln!("@@@@@ INVOKE {replicas:?}");

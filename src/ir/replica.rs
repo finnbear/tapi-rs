@@ -99,10 +99,8 @@ struct Sync<U: Upcalls, T: Transport<U>> {
     changed_view_recently: bool,
     upcalls: U,
     record: Record<U>,
-    // TODO: GC old replicas.
     outstanding_do_view_changes: HashMap<T::Address, DoViewChange<U::IO, U::CO, U::CR, T::Address>>,
     /// Last time received message from each peer replica.
-    // TODO: GC old replicas.
     peer_liveness: HashMap<T::Address, Instant>,
 }
 
@@ -198,6 +196,11 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                     break;
                 };
                 let mut sync = inner.sync.lock().unwrap();
+                let sync = &mut *sync;
+
+                sync.peer_liveness
+                    .retain(|a, _| sync.view.membership.contains(*a));
+
                 if sync.changed_view_recently {
                     sync.changed_view_recently = false;
                 }
@@ -248,7 +251,14 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
 
     fn broadcast_do_view_change(transport: &T, sync: &mut Sync<U, T>) {
         sync.changed_view_recently = true;
-        for address in &sync.view.membership {
+        let destinations = sync
+            .view
+            .membership
+            .iter()
+            .chain(sync.latest_normal_view.membership.iter())
+            .collect::<HashSet<_>>();
+
+        for address in destinations {
             if address == transport.address() {
                 continue;
             }
@@ -587,9 +597,19 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                             sync.changed_view_recently = true;
                             sync.status = Status::Normal;
                             sync.view.number = msg_view_number;
+
+                            let destinations = sync
+            .view
+            .membership
+            .iter()
+            .chain(sync.latest_normal_view.membership.iter())
+            .collect::<HashSet<_>>();
+
                             sync.latest_normal_view.number = msg_view_number;
+                            sync.latest_normal_view.membership = sync.view.membership.clone();
                             self.persist_view_info(&*sync);
-                            for address in &sync.view.membership {
+                            
+                            for address in destinations {
                                 if address == self.inner.transport.address() {
                                     continue;
                                 }
@@ -663,10 +683,12 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                 }
             }
             Message::<U, T>::RemoveMember(RemoveMember{address}) => {
+                println!("{:?} recv remove member {address:?}", self.inner.transport.address());
                 if sync.status.is_normal() && sync.view.membership.get_index(address).is_some() && sync.view.membership.len() > 1 && address != self.inner.transport.address() {
                     if !sync.view.membership.contains(self.inner.transport.address()) {
                         return None;
                     }
+                    println!("{:?} acting on remove member {address:?}", self.inner.transport.address());
                     sync.status = Status::ViewChanging;
                     sync.view.number.0 += 3;
 
