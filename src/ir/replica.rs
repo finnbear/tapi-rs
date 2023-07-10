@@ -549,7 +549,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                                             .count();
 
                                         if matches
-                                            >= sync.view.membership.size().f_over_two_plus_one()
+                                            >= sync.latest_normal_view.membership.size().f_over_two_plus_one()
                                         {
                                             majority_result_in_d = Some(entry.result.clone());
                                             break;
