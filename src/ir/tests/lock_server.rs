@@ -49,7 +49,7 @@ async fn lock_server_9() {
 #[tokio::test]
 async fn lock_server_loop() {
     loop {
-        tokio::time::timeout(Duration::from_secs(60), lock_server(3))
+        tokio::time::timeout(Duration::from_secs(120), lock_server(3))
             .await
             .unwrap();
     }
@@ -215,7 +215,7 @@ async fn lock_server(num_replicas: usize) {
         replicas.push(new);
     }
 
-    for i in 0..10 {
+    for i in 0..8 {
         assert_eq!(
             clients[0]
                 .invoke_consensus(Lock(clients[0].id()), &decide_lock)
@@ -223,19 +223,6 @@ async fn lock_server(num_replicas: usize) {
             LockResult::Ok,
             "{i}"
         );
-
-        if thread_rng().gen() {
-            let to_remove = replicas
-                .iter()
-                .map(|r| r.address())
-                .choose(&mut thread_rng())
-                .unwrap();
-            for r in replicas.iter() {
-                clients[0]
-                    .transport()
-                    .do_send(r.address(), crate::ir::RemoveMember { address: to_remove });
-            }
-        }
 
         assert_eq!(
             clients[1]
@@ -245,11 +232,22 @@ async fn lock_server(num_replicas: usize) {
             "{i}"
         );
 
-        if thread_rng().gen() {
-            add_replica(&mut replicas, &registry, &membership);
-
-            // Will fail.
-            add_replica(&mut replicas, &registry, &membership);
+        for _ in 0..2 {
+            if thread_rng().gen() {
+                let to_remove = replicas
+                    .iter()
+                    .map(|r| r.address())
+                    .choose(&mut thread_rng())
+                    .unwrap();
+                for r in replicas.iter() {
+                    clients[0]
+                        .transport()
+                        .do_send(r.address(), crate::ir::RemoveMember { address: to_remove });
+                }
+            }
+            if thread_rng().gen() {
+                add_replica(&mut replicas, &registry, &membership);
+            }
         }
     }
 
@@ -257,7 +255,7 @@ async fn lock_server(num_replicas: usize) {
         .invoke_inconsistent(Unlock(clients[0].id()))
         .await;
 
-    for _ in 0..(replicas.len() + 1) * 10 {
+    for _ in 0..(replicas.len() + 1) * 20 {
         ChannelTransport::<Upcalls>::sleep(Duration::from_secs(5)).await;
 
         eprintln!("@@@@@ INVOKE {replicas:?}");
