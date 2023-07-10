@@ -194,6 +194,10 @@ async fn lock_server(num_replicas: usize) {
     ) {
         let new = create_replica(&registry, &membership);
         for d in 0..new.address() {
+            if (membership.len()..membership.len() + 2).contains(&d) {
+                // is a client.
+                continue;
+            }
             for _i in 0..3 {
                 new.transport().do_send(
                     d,
@@ -222,6 +226,7 @@ async fn lock_server(num_replicas: usize) {
             "{i}"
         );
 
+        add_replica(&mut replicas, &registry, &membership);
         add_replica(&mut replicas, &registry, &membership);
     }
 

@@ -627,6 +627,11 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
             }
             Message::<U, T>::AddMember(AddMember{address}) => {
                 if sync.status.is_normal() && sync.view.membership.get_index(address).is_none() {
+                    if !sync.view.membership.contains(self.inner.transport.address()) {
+                        // TODO: Expand coverage.
+                        return None;
+                    }
+                    sync.status = Status::ViewChanging;
                     sync.view.number.0 += 3;
 
                     // Add the node.
@@ -641,13 +646,17 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                     };
 
                     // Become the leader before and after new node is added.
+                    let mut gov = 0;
                     while (sync.view.leader() != self.inner.transport.address())
                         || (next.leader() != self.inner.transport.address()) {
                         sync.view.number.0 += 1;
                         next.number.0 += 1;
                         debug_assert_eq!(sync.view.number, next.number);
+                        gov += 1;
+                        debug_assert!(gov < 1000, "{:?} {:?} {:?}", self.inner.transport.address(), sync.view, next);
                     }
                     sync.view = next;
+                    self.persist_view_info(&*sync);
 
                     // Election.
                     Self::broadcast_do_view_change(&self.inner.transport, sync);
