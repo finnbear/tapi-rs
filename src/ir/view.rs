@@ -1,4 +1,4 @@
-use super::{Membership};
+use super::Membership;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 

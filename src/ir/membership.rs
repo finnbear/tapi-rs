@@ -12,14 +12,6 @@ pub struct Membership<A> {
 }
 
 impl<A> Membership<A> {
-    /// # Panics
-    ///
-    /// If `members` is empty.
-    pub fn new(members: Vec<A>) -> Self {
-        assert!(!members.is_empty());
-        Self { members }
-    }
-
     pub fn size(&self) -> Size {
         Size(self.members.len() / 2)
     }
@@ -31,6 +23,17 @@ impl<A> Membership<A> {
 }
 
 impl<A: Eq + Copy> Membership<A> {
+    /// # Panics
+    ///
+    /// If `members` is empty or contains duplicates.
+    pub fn new(members: Vec<A>) -> Self {
+        assert!(!members.is_empty());
+        assert!(members
+            .iter()
+            .all(|a| members.iter().filter(|a2| a == *a2).count() == 1));
+        Self { members }
+    }
+
     pub fn get(&self, index: usize) -> Option<A> {
         self.members.get(index).cloned()
     }
@@ -44,35 +47,24 @@ impl<A: Eq + Copy> Membership<A> {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn iter(
-        &self,
-    ) -> std::iter::Map<
-        std::iter::Enumerate<std::slice::Iter<'_, A>>,
-        for<'a> fn((usize, &'a A)) -> (usize, A),
-    > {
+    pub fn iter(&self) -> std::iter::Copied<std::slice::Iter<'_, A>> {
         self.into_iter()
     }
 }
 
 impl<A> IntoIterator for Membership<A> {
-    type Item = (usize, A);
-    type IntoIter = std::iter::Enumerate<std::vec::IntoIter<A>>;
+    type Item = A;
+    type IntoIter = std::vec::IntoIter<A>;
     fn into_iter(self) -> Self::IntoIter {
-        self.members.into_iter().enumerate()
+        self.members.into_iter()
     }
 }
 
 impl<'a, A: Copy> IntoIterator for &'a Membership<A> {
-    type Item = (usize, A);
-    type IntoIter = std::iter::Map<
-        std::iter::Enumerate<std::slice::Iter<'a, A>>,
-        for<'b> fn((usize, &'b A)) -> Self::Item,
-    >;
+    type Item = A;
+    type IntoIter = std::iter::Copied<std::slice::Iter<'a, A>>;
     fn into_iter(self) -> Self::IntoIter {
-        self.members
-            .iter()
-            .enumerate()
-            .map(|(i, a)| (i, *a))
+        self.members.iter().copied()
     }
 }
 

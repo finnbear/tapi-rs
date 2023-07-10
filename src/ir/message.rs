@@ -120,8 +120,8 @@ pub struct Confirm<A> {
 /// Informs a replica about a new view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DoViewChange<IO, CO, CR, A> {
-    /// View number to change to.
-    pub view_number: ViewNumber,
+    /// View to change to.
+    pub view: View<A>,
     /// Is `Some` when sent from replica to new leader.
     pub addendum: Option<ViewChangeAddendum<IO, CO, CR, A>>,
 }

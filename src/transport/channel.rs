@@ -123,7 +123,7 @@ impl<U: IrReplicaUpcalls> Transport<U> for Channel<U> {
         let mut persistent = self.persistent.lock().unwrap();
         if let Some(value) = value {
             let string = serde_json::to_string(&value).unwrap();
-            let display = if string.len() > 100 {
+            let display = if string.len() > 200 {
                 let with_bc = bitcode::serialize(&value).unwrap();
                 format!("<{} bytes ({} with bitcode)>", string.len(), with_bc.len())
             } else {

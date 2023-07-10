@@ -118,7 +118,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                     transport.do_send(
                         address,
                         Message::<U, T>::DoViewChange(DoViewChange {
-                            view_number: latest_view.number,
+                            view: latest_view.clone(),
                             addendum: None,
                         }),
                     )
@@ -191,7 +191,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
         let sync = self.inner.sync.lock().unwrap();
         let membership_size = sync.view.membership.size();
 
-        let future = join(sync.view.membership.iter().map(|(_, address)| {
+        let future = join(sync.view.membership.iter().map(|address| {
             (
                 address,
                 self.inner
@@ -250,7 +250,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                     let sync = inner.sync.lock().unwrap();
                     let membership_size = sync.view.membership.size();
 
-                    let future = join(sync.view.membership.iter().map(|(_, address)| {
+                    let future = join(sync.view.membership.iter().map(|address| {
                         (
                             address,
                             inner.transport.send::<ReplyInconsistent<T::Address>>(
@@ -298,7 +298,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                 }
 
                 // println!("finalizing to membership: {:?}", sync.membership);
-                for (_, address) in &sync.view.membership {
+                for address in &sync.view.membership {
                     inner
                         .transport
                         .do_send(address, FinalizeInconsistent { op_id });
@@ -363,7 +363,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                     let op_id = OpId { client_id, number };
                     let membership_size = sync.view.membership.size();
 
-                    let future = join(sync.view.membership.iter().map(|(_, address)| {
+                    let future = join(sync.view.membership.iter().map(|address| {
                         (
                             address,
                             inner.transport.send::<ReplyConsensus<U::CR, T::Address>>(
@@ -432,7 +432,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                     if finalized.is_none() && let Some((_, result)) = get_quorum(membership_size, &results, true) {
                         // Fast path.
                         // eprintln!("doing fast path");
-                        for (_, address) in &sync.view.membership {
+                        for address in &sync.view.membership {
                             inner.transport.do_send(
                                 address,
                                 FinalizeConsensus {
@@ -467,7 +467,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                             reply_consensus_view.is_none()
                         );
                         */
-                        let future = join(sync.view.membership.iter().map(|(_, address)| {
+                        let future = join(sync.view.membership.iter().map(|address| {
                             (
                                 address,
                                 inner.transport.send::<Confirm<T::Address>>(

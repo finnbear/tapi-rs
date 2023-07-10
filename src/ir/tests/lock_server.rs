@@ -104,7 +104,7 @@ async fn lock_server(num_replicas: usize) {
 
             for client_id in locked {
                 if !unlocked.contains(&client_id) {
-                    if self.locked.is_some() {
+                    if self.locked.is_some() && self.locked != Some(client_id) {
                         panic!();
                     }
                     self.locked = Some(client_id);
@@ -123,7 +123,7 @@ async fn lock_server(num_replicas: usize) {
 
                 results.insert(
                     *op_id,
-                    if successful && self.locked.is_none() {
+                    if successful && (self.locked.is_none() || self.locked == Some(request.0)) {
                         self.locked = Some(request.0);
                         LockResult::Ok
                     } else {
@@ -132,8 +132,8 @@ async fn lock_server(num_replicas: usize) {
                 );
             }
 
-            for (op_id, _, _) in &u {
-                results.insert(*op_id, LockResult::No);
+            for (op_id, op, _) in &u {
+                results.insert(*op_id, self.exec_consensus(op));
             }
 
             results
@@ -158,7 +158,7 @@ async fn lock_server(num_replicas: usize) {
         )
     }
 
-    let replicas = std::iter::repeat_with(|| create_replica(&registry, &membership))
+    let mut replicas = std::iter::repeat_with(|| create_replica(&registry, &membership))
         .take(num_replicas)
         .collect::<Vec<_>>();
 
@@ -183,19 +183,42 @@ async fn lock_server(num_replicas: usize) {
         }
     };
 
-    for _ in 0..2 {
+    fn add_replica(
+        replicas: &mut Vec<Arc<IrReplica<Upcalls, ChannelTransport<Upcalls>>>>,
+        registry: &ChannelRegistry<Upcalls>,
+        membership: &IrMembership<usize>,
+    ) {
+        let new = create_replica(&registry, &membership);
+        for d in 0..new.address() {
+            for _i in 0..3 {
+                new.transport().do_send(
+                    d,
+                    crate::ir::AddMember {
+                        address: new.address(),
+                    },
+                );
+            }
+        }
+        replicas.push(new);
+    }
+
+    for i in 0..3 {
         assert_eq!(
             clients[0]
                 .invoke_consensus(Lock(clients[0].id()), &decide_lock)
                 .await,
-            LockResult::Ok
+            LockResult::Ok,
+            "{i}"
         );
         assert_eq!(
             clients[1]
                 .invoke_consensus(Lock(clients[1].id()), &decide_lock)
                 .await,
-            LockResult::No
+            LockResult::No,
+            "{i}"
         );
+
+        add_replica(&mut replicas, &registry, &membership);
     }
 
     clients[0]
