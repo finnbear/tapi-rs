@@ -75,11 +75,13 @@ async fn lock_server(num_replicas: usize) {
             let _ = op;
             unreachable!();
         }
+
         fn exec_inconsistent(&mut self, op: &Self::IO) {
             if Some(op.0) == self.locked {
                 self.locked = None;
             }
         }
+
         fn exec_consensus(&mut self, op: &Self::CO) -> Self::CR {
             if self.locked.is_none() || self.locked == Some(op.0) {
                 self.locked = Some(op.0);
@@ -88,6 +90,7 @@ async fn lock_server(num_replicas: usize) {
                 LockResult::No
             }
         }
+
         fn sync(&mut self, _: &IrRecord<Self>, record: &IrRecord<Self>) {
             self.locked = None;
 
@@ -104,13 +107,14 @@ async fn lock_server(num_replicas: usize) {
 
             for client_id in locked {
                 if !unlocked.contains(&client_id) {
-                    if self.locked.is_some() && self.locked != Some(client_id) {
+                    if self.locked.is_some() {
                         panic!();
                     }
                     self.locked = Some(client_id);
                 }
             }
         }
+
         fn merge(
             &mut self,
             d: HashMap<IrOpId, (Self::CO, Self::CR)>,
@@ -225,7 +229,7 @@ async fn lock_server(num_replicas: usize) {
         .invoke_inconsistent(Unlock(clients[0].id()))
         .await;
 
-    for _ in 0..10 {
+    for _ in 0..16 {
         ChannelTransport::<Upcalls>::sleep(Duration::from_secs(5)).await;
 
         eprintln!("@@@@@ INVOKE {replicas:?}");

@@ -419,11 +419,14 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                             }
                         }
 
-                        let threshold = sync.view.membership.size().f();
+                        let threshold = sync.latest_normal_view.membership.size().f();
                         let matching = sync
                             .outstanding_do_view_changes
-                            .values()
-                            .filter(|other| other.view.number == sync.view.number);
+                            .iter()
+                            .filter(|(address, other)|
+                                sync.latest_normal_view.membership.contains(**address)
+                                && other.view.number == sync.view.number
+                            );
 
                         if matching.clone().count() >= threshold {
                             eprintln!("{:?} DOING VIEW CHANGE", self.inner.transport.address());
@@ -431,7 +434,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                                 let latest_normal_view =
                                     matching
                                         .clone()
-                                        .map(|r| {
+                                        .map(|(_, r)| {
                                             &r.addendum.as_ref().unwrap().latest_normal_view
                                         })
                                         .chain(std::iter::once(&sync.latest_normal_view))
@@ -440,11 +443,11 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                                 ;
                                 let mut latest_records = matching
                                     .clone()
-                                    .filter(|r| {
+                                    .filter(|(_, r)| {
                                         r.addendum.as_ref().unwrap().latest_normal_view.number
                                             == latest_normal_view.number
                                     })
-                                    .map(|r| r.addendum.as_ref().unwrap().record.clone())
+                                    .map(|(_, r)| r.addendum.as_ref().unwrap().record.clone())
                                     .collect::<Vec<_>>();
                                 if sync.latest_normal_view.number == latest_normal_view.number {
                                     latest_records.push(sync.record.clone());
