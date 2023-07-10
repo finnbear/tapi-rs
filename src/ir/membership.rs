@@ -1,104 +1,94 @@
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-
-use crate::transport::Transport;
-
-use super::ReplicaIndex;
 
 /// Internally stores 'f'
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Size(usize);
 
 /// Stores the address of replica group members.
-#[derive(Clone)]
-pub struct Membership<T: Transport> {
-    members: Vec<T::Address>,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Membership<A> {
+    members: Vec<A>,
 }
 
-impl<T: Transport> Debug for Membership<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Membership")
-            .field("members", &self.members)
-            .finish()
-    }
-}
-
-impl<T: Transport> Membership<T> {
-    /// Must have an odd number of replicas.
-    pub fn new(members: Vec<T::Address>) -> Self {
-        assert_eq!(members.len() % 2, 1);
-        Self { members }
-    }
-
-    pub fn get(&self, index: ReplicaIndex) -> Option<T::Address> {
-        self.members.get(index.0).cloned()
-    }
-
+impl<A> Membership<A> {
     pub fn size(&self) -> Size {
-        Size((self.members.len() - 1) / 2)
+        Size(self.members.len() / 2)
     }
 
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.members.len()
     }
+}
 
-    pub fn get_index(&self, address: T::Address) -> Option<ReplicaIndex> {
-        self.members
+impl<A: Eq + Copy> Membership<A> {
+    /// # Panics
+    ///
+    /// If `members` is empty or contains duplicates.
+    pub fn new(members: Vec<A>) -> Self {
+        assert!(!members.is_empty());
+        assert!(members
             .iter()
-            .position(|a| *a == address)
-            .map(ReplicaIndex)
+            .all(|a| members.iter().filter(|a2| a == *a2).count() == 1));
+        Self { members }
+    }
+
+    pub fn get(&self, index: usize) -> Option<A> {
+        self.members.get(index).cloned()
+    }
+
+    pub fn contains(&self, address: A) -> bool {
+        self.members.contains(&address)
+    }
+
+    pub fn get_index(&self, address: A) -> Option<usize> {
+        self.members.iter().position(|a| *a == address)
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn iter(
-        &self,
-    ) -> std::iter::Map<
-        std::iter::Enumerate<std::slice::Iter<'_, T::Address>>,
-        for<'a> fn((usize, &'a T::Address)) -> (ReplicaIndex, T::Address),
-    > {
+    pub fn iter(&self) -> std::iter::Copied<std::slice::Iter<'_, A>> {
         self.into_iter()
     }
 }
 
-impl<T: Transport> IntoIterator for Membership<T> {
-    type Item = (ReplicaIndex, T::Address);
-    type IntoIter = std::iter::Map<
-        std::iter::Enumerate<std::vec::IntoIter<T::Address>>,
-        fn((usize, T::Address)) -> Self::Item,
-    >;
+impl<A> IntoIterator for Membership<A> {
+    type Item = A;
+    type IntoIter = std::vec::IntoIter<A>;
     fn into_iter(self) -> Self::IntoIter {
-        self.members
-            .into_iter()
-            .enumerate()
-            .map(|(i, a)| (ReplicaIndex(i), a))
+        self.members.into_iter()
     }
 }
 
-impl<'a, T: Transport> IntoIterator for &'a Membership<T> {
-    type Item = (ReplicaIndex, T::Address);
-    type IntoIter = std::iter::Map<
-        std::iter::Enumerate<std::slice::Iter<'a, T::Address>>,
-        for<'b> fn((usize, &'b T::Address)) -> Self::Item,
-    >;
+impl<'a, A: Copy> IntoIterator for &'a Membership<A> {
+    type Item = A;
+    type IntoIter = std::iter::Copied<std::slice::Iter<'a, A>>;
     fn into_iter(self) -> Self::IntoIter {
-        self.members
-            .iter()
-            .enumerate()
-            .map(|(i, a)| (ReplicaIndex(i), *a))
+        self.members.iter().copied()
     }
 }
 
 impl Size {
+    /// One node fewer than a majority.
+    ///
+    /// With an odd number of replicas, this is the maximum
+    /// number of nodes that can fail while preserving liveness.
+    ///
     /// In a replica group of size 3, this is 1.
     pub fn f(&self) -> usize {
         self.0
     }
 
+    /// A majority of nodes.
+    ///
     /// In a replica group of size 3, this is 2.
     pub fn f_plus_one(&self) -> usize {
         self.f() + 1
     }
 
+    /// Minimum number of nodes that guarantees a majority of
+    /// all possible majorities of nodes.
+    ///
     /// In a replica group of size 3, this is 3.
     pub fn three_over_two_f_plus_one(&self) -> usize {
         (self.f() * 3).div_ceil(2) + 1

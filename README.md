@@ -9,7 +9,7 @@ Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-
   - [x] Consensus
   - [x] View changes
   - [x] Recovery
-  - [ ] ~~Epoch changes~~
+  - [x] Membership change
   - [ ] Real network transport
 - [ ] TAPIR
   - [x] Get

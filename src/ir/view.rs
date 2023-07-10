@@ -1,5 +1,4 @@
-use super::{Membership, ReplicaIndex};
-use crate::transport::Transport;
+use super::Membership;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -17,13 +16,17 @@ impl Debug for Number {
         write!(f, "V({})", self.0)
     }
 }
-pub struct View<T: Transport> {
-    pub membership: Membership<T>,
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct View<A> {
+    pub membership: Membership<A>,
     pub number: Number,
 }
 
-impl<T: Transport> View<T> {
-    pub fn leader_index(&self) -> ReplicaIndex {
-        ReplicaIndex((self.number.0 % self.membership.len() as u64) as usize)
+impl<A: Eq + Copy> View<A> {
+    pub fn leader(&self) -> A {
+        self.membership
+            .get((self.number.0 % self.membership.len() as u64) as usize)
+            .unwrap()
     }
 }

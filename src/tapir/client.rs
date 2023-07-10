@@ -1,5 +1,5 @@
 use super::{Key, Replica, ShardClient, ShardTransaction, Timestamp, Value};
-use crate::{IrMembership, IrMessage, OccPrepareResult, OccTransactionId, Transport};
+use crate::{IrMembership, OccPrepareResult, OccTransactionId, Transport};
 use rand::{thread_rng, Rng};
 use std::{
     future::Future,
@@ -8,7 +8,7 @@ use std::{
 };
 use tokio::select;
 
-pub struct Client<K: Key, V: Value, T: Transport> {
+pub struct Client<K: Key, V: Value, T: Transport<Replica<K, V>>> {
     /// TODO: Add multiple shards.
     inner: ShardClient<K, V, T>,
     #[allow(unused)]
@@ -16,15 +16,15 @@ pub struct Client<K: Key, V: Value, T: Transport> {
     next_transaction_number: AtomicU64,
 }
 
-pub struct Transaction<K: Key, V: Value, T: Transport> {
+pub struct Transaction<K: Key, V: Value, T: Transport<Replica<K, V>>> {
     #[allow(unused)]
     id: OccTransactionId,
     // TODO: Multiple shards.
     inner: ShardTransaction<K, V, T>,
 }
 
-impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Client<K, V, T> {
-    pub fn new(membership: IrMembership<T>, transport: T) -> Self {
+impl<K: Key, V: Value, T: Transport<Replica<K, V>>> Client<K, V, T> {
+    pub fn new(membership: IrMembership<T::Address>, transport: T) -> Self {
         Self {
             inner: ShardClient::new(membership, transport.clone()),
             transport,
@@ -44,7 +44,7 @@ impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Client<
     }
 }
 
-impl<K: Key, V: Value, T: Transport<Message = IrMessage<Replica<K, V>>>> Transaction<K, V, T> {
+impl<K: Key, V: Value, T: Transport<Replica<K, V>>> Transaction<K, V, T> {
     pub fn get(&self, key: K) -> impl Future<Output = Option<V>> {
         self.inner.get(key)
     }

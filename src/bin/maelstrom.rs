@@ -19,14 +19,12 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tapirs::{
-    IrMembership, IrMessage, IrReplica, IrReplicaIndex, TapirClient, TapirReplica, Transport,
-};
+use tapirs::{IrMembership, IrMessage, IrReplica, TapirClient, TapirReplica, Transport};
 use tokio::spawn;
 
 type K = String;
 type V = String;
-type Message = IrMessage<TapirReplica<K, V>>;
+type Message = IrMessage<TapirReplica<K, V>, Maelstrom>;
 
 #[derive(Default)]
 struct KvNode {
@@ -64,7 +62,7 @@ struct Inner {
     net: ProcNet<LinKv, Wrapper>,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug, Eq, PartialEq, Hash)]
 enum IdEnum {
     Replica(usize),
     App(usize),
@@ -99,9 +97,8 @@ impl FromStr for IdEnum {
     }
 }
 
-impl Transport for Maelstrom {
+impl Transport<TapirReplica<K, V>> for Maelstrom {
     type Address = IdEnum;
-    type Message = Message;
     type Sleep = tokio::time::Sleep;
 
     fn address(&self) -> Self::Address {
@@ -129,10 +126,10 @@ impl Transport for Maelstrom {
         tokio::time::sleep(duration)
     }
 
-    fn send<R: TryFrom<Self::Message> + Send + std::fmt::Debug>(
+    fn send<R: TryFrom<IrMessage<TapirReplica<K, V>, Self>> + Send + std::fmt::Debug>(
         &self,
         address: Self::Address,
-        message: impl Into<Self::Message> + std::fmt::Debug,
+        message: impl Into<IrMessage<TapirReplica<K, V>, Self>> + std::fmt::Debug,
     ) -> impl futures::Future<Output = R> + Send + 'static {
         let id = self.id;
         let (sender, mut receiver) = tokio::sync::oneshot::channel();
@@ -171,7 +168,11 @@ impl Transport for Maelstrom {
         }
     }
 
-    fn do_send(&self, address: Self::Address, message: impl Into<Self::Message> + std::fmt::Debug) {
+    fn do_send(
+        &self,
+        address: Self::Address,
+        message: impl Into<IrMessage<TapirReplica<K, V>, Self>> + std::fmt::Debug,
+    ) {
         let message = Wrapper {
             message: message.into(),
             do_reply_to: None,
@@ -216,8 +217,7 @@ impl Process<LinKv, Wrapper> for KvNode {
         self.inner = Some((
             transport.clone(),
             match id {
-                IdEnum::Replica(index) => KvNodeInner::Replica(Arc::new(IrReplica::new(
-                    IrReplicaIndex(index),
+                IdEnum::Replica(_) => KvNodeInner::Replica(Arc::new(IrReplica::new(
                     membership,
                     TapirReplica::new(true),
                     transport,

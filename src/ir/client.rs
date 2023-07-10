@@ -1,7 +1,7 @@
 use super::{
     Confirm, DoViewChange, FinalizeConsensus, FinalizeInconsistent, Membership, MembershipSize,
-    Message, OpId, ProposeConsensus, ProposeInconsistent, ReplicaIndex, ReplicaUpcalls,
-    ReplyConsensus, ReplyInconsistent, ReplyUnlogged, RequestUnlogged, ViewNumber,
+    Message, OpId, ProposeConsensus, ProposeInconsistent, ReplicaUpcalls, ReplyConsensus,
+    ReplyInconsistent, ReplyUnlogged, RequestUnlogged, View, ViewNumber,
 };
 use crate::{
     util::{join, Join},
@@ -39,13 +39,13 @@ impl Debug for Id {
 }
 
 /// IR client, capable of invoking operations on an IR replica group.
-pub struct Client<U: ReplicaUpcalls, T: Transport> {
+pub struct Client<U: ReplicaUpcalls, T: Transport<U>> {
     id: Id,
-    inner: Arc<Inner<T>>,
+    inner: Arc<Inner<U, T>>,
     _spooky: PhantomData<U>,
 }
 
-impl<U: ReplicaUpcalls, T: Transport> Clone for Client<U, T> {
+impl<U: ReplicaUpcalls, T: Transport<U>> Clone for Client<U, T> {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
@@ -55,18 +55,17 @@ impl<U: ReplicaUpcalls, T: Transport> Clone for Client<U, T> {
     }
 }
 
-struct Inner<T: Transport> {
+struct Inner<U: ReplicaUpcalls, T: Transport<U>> {
     transport: T,
-    sync: Mutex<SyncInner<T>>,
+    sync: Mutex<SyncInner<U, T>>,
 }
 
-struct SyncInner<T: Transport> {
+struct SyncInner<U: ReplicaUpcalls, T: Transport<U>> {
     operation_counter: u64,
-    membership: Membership<T>,
-    recent: ViewNumber,
+    view: View<T::Address>,
 }
 
-impl<T: Transport> SyncInner<T> {
+impl<U: ReplicaUpcalls, T: Transport<U>> SyncInner<U, T> {
     fn next_number(&mut self) -> u64 {
         let ret = self.operation_counter;
         self.operation_counter += 1;
@@ -74,16 +73,18 @@ impl<T: Transport> SyncInner<T> {
     }
 }
 
-impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
-    pub fn new(membership: Membership<T>, transport: T) -> Self {
+impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
+    pub fn new(membership: Membership<T::Address>, transport: T) -> Self {
         Self {
             id: Id::new(),
             inner: Arc::new(Inner {
                 transport,
                 sync: Mutex::new(SyncInner {
                     operation_counter: 0,
-                    membership,
-                    recent: ViewNumber(0),
+                    view: View {
+                        membership,
+                        number: ViewNumber(0),
+                    },
                 }),
             }),
             _spooky: PhantomData,
@@ -98,23 +99,33 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
         &self.inner.transport
     }
 
-    fn notify_old_views(
+    /// Updates own view and those of lagging replicas.
+    ///
+    /// `Index`'s in `views` must correspond to `sync.view`.
+    fn update_view<'a>(
         transport: &T,
-        sync: &mut SyncInner<T>,
-        views: impl IntoIterator<Item = (ReplicaIndex, ViewNumber)> + Clone,
+        sync: &mut SyncInner<U, T>,
+        views: impl IntoIterator<Item = (T::Address, &'a View<T::Address>)> + Clone,
     ) {
-        if let Some(latest_view) = views.clone().into_iter().map(|(_, n)| n).max() {
-            sync.recent = sync.recent.max(latest_view);
-            for (index, view_number) in views {
-                if view_number < latest_view {
+        if let Some(latest_view) = views
+            .clone()
+            .into_iter()
+            .map(|(_, n)| n)
+            .max_by_key(|v| v.number)
+        {
+            for (address, view) in views {
+                if view.number < latest_view.number {
                     transport.do_send(
-                        sync.membership.get(index).unwrap(),
-                        Message::<U>::DoViewChange(DoViewChange {
-                            view_number: latest_view,
+                        address,
+                        Message::<U, T>::DoViewChange(DoViewChange {
+                            view: latest_view.clone(),
                             addendum: None,
                         }),
                     )
                 }
+            }
+            if latest_view.number > sync.view.number {
+                sync.view = latest_view.clone();
             }
         }
     }
@@ -124,7 +135,7 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
         let inner = Arc::clone(&self.inner);
         let (index, count) = {
             let sync = inner.sync.lock().unwrap();
-            let count = sync.membership.len();
+            let count = sync.view.membership.len();
             (thread_rng().gen_range(0..count), count)
         };
 
@@ -136,13 +147,15 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                 {
                     let sync = inner.sync.lock().unwrap();
                     let address = sync
+                        .view
                         .membership
-                        .get(ReplicaIndex((index + futures.len()) % count))
+                        .get((index + futures.len()) % count)
                         .unwrap();
                     drop(sync);
-                    let future = inner
-                        .transport
-                        .send::<ReplyUnlogged<U::UR>>(address, RequestUnlogged { op: op.clone() });
+                    let future = inner.transport.send::<ReplyUnlogged<U::UR, T::Address>>(
+                        address,
+                        RequestUnlogged { op: op.clone() },
+                    );
                     futures.push(future);
                 }
 
@@ -157,7 +170,9 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                     }
                 };
                 let mut sync = inner.sync.lock().unwrap();
-                sync.recent = sync.recent.max(response.view_number);
+                if response.view.number > sync.view.number {
+                    sync.view = response.view;
+                }
                 return response.result;
             }
         }
@@ -170,18 +185,21 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
         &self,
         op: U::UO,
     ) -> (
-        Join<ReplicaIndex, impl Future<Output = ReplyUnlogged<U::UR>>>,
+        Join<T::Address, impl Future<Output = ReplyUnlogged<U::UR, T::Address>>>,
         MembershipSize,
     ) {
         let sync = self.inner.sync.lock().unwrap();
-        let membership_size = sync.membership.size();
+        let membership_size = sync.view.membership.size();
 
-        let future = join(sync.membership.iter().map(|(index, address)| {
+        let future = join(sync.view.membership.iter().map(|address| {
             (
-                index,
+                address,
                 self.inner
                     .transport
-                    .send::<ReplyUnlogged<U::UR>>(address, RequestUnlogged { op: op.clone() }),
+                    .send::<ReplyUnlogged<U::UR, T::Address>>(
+                        address,
+                        RequestUnlogged { op: op.clone() },
+                    ),
             )
         }));
 
@@ -201,29 +219,28 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
             }
         };
 
-        fn has_ancient(results: &HashMap<ReplicaIndex, ReplyInconsistent>) -> bool {
+        fn has_ancient<A>(results: &HashMap<A, ReplyInconsistent<A>>) -> bool {
             results.values().any(|v| v.state.is_none())
         }
 
-        fn has_quorum(
+        fn has_quorum<A>(
             membership: MembershipSize,
-            results: &HashMap<ReplicaIndex, ReplyInconsistent>,
+            results: &HashMap<A, ReplyInconsistent<A>>,
             check_views: bool,
         ) -> bool {
-            let threshold = membership.f_plus_one();
             if check_views {
                 for result in results.values() {
                     let matching = results
                         .values()
-                        .filter(|other| other.view_number == result.view_number)
+                        .filter(|other| other.view.number == result.view.number)
                         .count();
-                    if matching >= threshold {
+                    if matching >= result.view.membership.size().f_plus_one() {
                         return true;
                     }
                 }
                 false
             } else {
-                results.len() >= threshold
+                results.len() >= membership.f_plus_one()
             }
         }
 
@@ -231,17 +248,17 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
             loop {
                 let (membership_size, future) = {
                     let sync = inner.sync.lock().unwrap();
-                    let membership_size = sync.membership.size();
+                    let membership_size = sync.view.membership.size();
 
-                    let future = join(sync.membership.iter().map(|(index, address)| {
+                    let future = join(sync.view.membership.iter().map(|address| {
                         (
-                            index,
-                            inner.transport.send::<ReplyInconsistent>(
+                            address,
+                            inner.transport.send::<ReplyInconsistent<T::Address>>(
                                 address,
                                 ProposeInconsistent {
                                     op_id,
                                     op: op.clone(),
-                                    recent: sync.recent,
+                                    recent: sync.view.number,
                                 },
                             ),
                         )
@@ -249,27 +266,31 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                     (membership_size, future)
                 };
 
-                let mut timeout = std::pin::pin!(T::sleep(Duration::from_millis(250)));
+                let mut soft_timeout = std::pin::pin!(T::sleep(Duration::from_millis(250)));
+
+                // E.g. the replica group got smaller and we can't get a response from a majority of the old size.
+                let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_millis(5000)));
 
                 let results = future
                     .until(
-                        move |results: &HashMap<ReplicaIndex, ReplyInconsistent>,
+                        move |results: &HashMap<T::Address, ReplyInconsistent<T::Address>>,
                               cx: &mut Context<'_>| {
                             has_ancient(results)
                                 || has_quorum(
                                     membership_size,
                                     results,
-                                    timeout.as_mut().poll(cx).is_ready(),
+                                    soft_timeout.as_mut().poll(cx).is_ready(),
                                 )
+                                || hard_timeout.as_mut().poll(cx).is_ready()
                         },
                     )
                     .await;
 
                 let mut sync = inner.sync.lock().unwrap();
-                Self::notify_old_views(
+                Self::update_view(
                     &inner.transport,
                     &mut *sync,
-                    results.iter().map(|(i, r)| (*i, r.view_number)),
+                    results.iter().map(|(i, r)| (*i, &r.view)),
                 );
 
                 if has_ancient(&results) || !has_quorum(membership_size, &results, true) {
@@ -277,7 +298,7 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                 }
 
                 // println!("finalizing to membership: {:?}", sync.membership);
-                for (_, address) in &sync.membership {
+                for address in &sync.view.membership {
                     inner
                         .transport
                         .do_send(address, FinalizeInconsistent { op_id });
@@ -293,22 +314,22 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
         op: U::CO,
         decide: impl Fn(HashMap<U::CR, usize>, MembershipSize) -> U::CR + Send,
     ) -> impl Future<Output = U::CR> + Send {
-        fn has_ancient<R>(replies: &HashMap<ReplicaIndex, ReplyConsensus<R>>) -> bool {
+        fn has_ancient<R, A>(replies: &HashMap<A, ReplyConsensus<R, A>>) -> bool {
             replies.values().any(|v| v.result_state.is_none())
         }
 
-        fn get_finalized<R>(replies: &HashMap<ReplicaIndex, ReplyConsensus<R>>) -> Option<&R> {
+        fn get_finalized<R, A>(replies: &HashMap<A, ReplyConsensus<R, A>>) -> Option<&R> {
             replies
                 .values()
                 .find(|r| r.result_state.as_ref().unwrap().1.is_finalized())
                 .map(|r| &r.result_state.as_ref().unwrap().0)
         }
 
-        fn get_quorum<R: PartialEq + Debug>(
+        fn get_quorum<R: PartialEq + Debug, A>(
             membership: MembershipSize,
-            replies: &HashMap<ReplicaIndex, ReplyConsensus<R>>,
+            replies: &HashMap<A, ReplyConsensus<R, A>>,
             matching_results: bool,
-        ) -> Option<(ViewNumber, &R)> {
+        ) -> Option<(&View<A>, &R)> {
             let required = if matching_results {
                 membership.three_over_two_f_plus_one()
             } else {
@@ -318,17 +339,14 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                 let matches = replies
                     .values()
                     .filter(|other| {
-                        other.view_number == candidate.view_number
+                        other.view.number == candidate.view.number
                             && (!matching_results
                                 || other.result_state.as_ref().unwrap().0
                                     == candidate.result_state.as_ref().unwrap().0)
                     })
                     .count();
                 if matches >= required {
-                    return Some((
-                        candidate.view_number,
-                        &candidate.result_state.as_ref().unwrap().0,
-                    ));
+                    return Some((&candidate.view, &candidate.result_state.as_ref().unwrap().0));
                 }
             }
             None
@@ -343,17 +361,17 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                     let mut sync = inner.sync.lock().unwrap();
                     let number = sync.next_number();
                     let op_id = OpId { client_id, number };
-                    let membership_size = sync.membership.size();
+                    let membership_size = sync.view.membership.size();
 
-                    let future = join(sync.membership.iter().map(|(index, address)| {
+                    let future = join(sync.view.membership.iter().map(|address| {
                         (
-                            index,
-                            inner.transport.send::<ReplyConsensus<U::CR>>(
+                            address,
+                            inner.transport.send::<ReplyConsensus<U::CR, T::Address>>(
                                 address,
                                 ProposeConsensus {
                                     op_id,
                                     op: op.clone(),
-                                    recent: sync.recent,
+                                    recent: sync.view.number,
                                 },
                             ),
                         )
@@ -366,7 +384,7 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
 
                 let results = future
                     .until(
-                        move |results: &HashMap<ReplicaIndex, ReplyConsensus<U::CR>>,
+                        move |results: &HashMap<T::Address, ReplyConsensus<U::CR, T::Address>>,
                               cx: &mut Context<'_>| {
                             has_ancient(results)
                                 || get_finalized(results).is_some()
@@ -381,18 +399,14 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                     )
                     .await;
 
-                fn get_quorum_view(
-                    membership: MembershipSize,
-                    results: &HashMap<ReplicaIndex, Confirm>,
-                ) -> Option<ViewNumber> {
-                    let threshold = membership.f_plus_one();
+                fn get_quorum_view<A>(results: &HashMap<A, Confirm<A>>) -> Option<&View<A>> {
                     for result in results.values() {
                         let matching = results
                             .values()
-                            .filter(|other| other.view_number == result.view_number)
+                            .filter(|other| other.view.number == result.view.number)
                             .count();
-                        if matching >= threshold {
-                            return Some(result.view_number);
+                        if matching >= result.view.membership.size().f_plus_one() {
+                            return Some(&result.view);
                         }
                     }
                     None
@@ -401,10 +415,10 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                 let next = {
                     let mut sync = inner.sync.lock().unwrap();
 
-                    Self::notify_old_views(
+                    Self::update_view(
                         &inner.transport,
                         &mut *sync,
-                        results.iter().map(|(i, r)| (*i, r.view_number)),
+                        results.iter().map(|(i, r)| (*i, &r.view)),
                     );
 
                     if has_ancient(&results) {
@@ -412,13 +426,13 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                         continue;
                     }
 
-                    let membership_size = sync.membership.size();
+                    let membership_size = sync.view.membership.size();
                     let finalized = get_finalized(&results);
                     //println!("checking quorum: {}", finalized.is_some());
                     if finalized.is_none() && let Some((_, result)) = get_quorum(membership_size, &results, true) {
                         // Fast path.
                         // eprintln!("doing fast path");
-                        for (_, address) in &sync.membership {
+                        for address in &sync.view.membership {
                             inner.transport.do_send(
                                 address,
                                 FinalizeConsensus {
@@ -432,18 +446,17 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
 
                     if let Some((result, reply_consensus_view)) =
                         finalized.map(|f| (f.clone(), None)).or_else(|| {
-                            let view_number =
-                                get_quorum(membership_size, &results, false).map(|(v, _)| v);
-                            view_number.map(|view_number| {
+                            let view = get_quorum(membership_size, &results, false).map(|(v, _)| v);
+                            view.cloned().map(|view| {
                                 let results = results
                                     .into_values()
-                                    .filter(|rc| rc.view_number == view_number)
+                                    .filter(|rc| rc.view.number == view.number)
                                     .map(|rc| rc.result_state.unwrap().0);
                                 let mut totals = HashMap::new();
                                 for result in results {
                                     *totals.entry(result).or_default() += 1;
                                 }
-                                (decide(totals, membership_size), Some(view_number))
+                                (decide(totals, view.membership.size()), Some(view.number))
                             })
                         })
                     {
@@ -454,10 +467,10 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                             reply_consensus_view.is_none()
                         );
                         */
-                        let future = join(sync.membership.iter().map(|(index, address)| {
+                        let future = join(sync.view.membership.iter().map(|address| {
                             (
-                                index,
-                                inner.transport.send::<Confirm>(
+                                address,
+                                inner.transport.send::<Confirm<T::Address>>(
                                     address,
                                     FinalizeConsensus {
                                         op_id,
@@ -479,8 +492,9 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                     let mut hard_timeout = std::pin::pin!(T::sleep(Duration::from_millis(500)));
                     let results = future
                         .until(
-                            |results: &HashMap<ReplicaIndex, Confirm>, cx: &mut Context<'_>| {
-                                get_quorum_view(membership_size, results).is_some()
+                            |results: &HashMap<T::Address, Confirm<T::Address>>,
+                             cx: &mut Context<'_>| {
+                                get_quorum_view(results).is_some()
                                     || (soft_timeout.as_mut().poll(cx).is_ready()
                                         && results.len() >= membership_size.f_plus_one())
                                     || hard_timeout.as_mut().poll(cx).is_ready()
@@ -488,12 +502,12 @@ impl<U: ReplicaUpcalls, T: Transport<Message = Message<U>>> Client<U, T> {
                         )
                         .await;
                     let mut sync = inner.sync.lock().unwrap();
-                    Self::notify_old_views(
+                    Self::update_view(
                         &inner.transport,
                         &mut *sync,
-                        results.iter().map(|(i, r)| (*i, r.view_number)),
+                        results.iter().map(|(i, r)| (*i, &r.view)),
                     );
-                    if let Some(quorum_view) = get_quorum_view(membership_size, &results) && reply_consensus_view.map(|reply_consensus_view| quorum_view == reply_consensus_view).unwrap_or(true) {
+                    if let Some(quorum_view) = get_quorum_view(&results) && reply_consensus_view.map(|reply_consensus_view| quorum_view.number == reply_consensus_view).unwrap_or(true) {
                         return result;
                     }
                 }
