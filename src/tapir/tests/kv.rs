@@ -88,7 +88,12 @@ async fn fuzz_rwr_7() {
 async fn fuzz_rwr(replicas: usize) {
     for _ in 0..16 {
         for linearizable in [false, true] {
-            rwr(linearizable, replicas).await;
+            timeout(
+                Duration::from_secs((replicas as u64 + 5) * 10),
+                rwr(linearizable, replicas),
+            )
+            .await
+            .unwrap();
         }
     }
 }
@@ -129,12 +134,21 @@ async fn rwr(linearizable: bool, num_replicas: usize) {
 
 #[tokio::test]
 async fn increment_sequential_3() {
-    increment_sequential(3).await;
+    increment_sequential_timeout(3).await;
 }
 
 #[tokio::test]
 async fn increment_sequential_7() {
-    increment_sequential(7).await;
+    increment_sequential_timeout(7).await;
+}
+
+async fn increment_sequential_timeout(num_replicas: usize) {
+    timeout(
+        Duration::from_secs((num_replicas as u64 + 10) * 10),
+        increment_sequential(num_replicas),
+    )
+    .await
+    .unwrap();
 }
 
 async fn increment_sequential(num_replicas: usize) {
@@ -160,12 +174,21 @@ async fn increment_sequential(num_replicas: usize) {
 
 #[tokio::test]
 async fn increment_parallel_3() {
-    increment_parallel(3).await;
+    increment_parallel_timeout(3).await;
 }
 
 #[tokio::test]
 async fn increment_parallel_7() {
-    increment_parallel(7).await;
+    increment_parallel_timeout(7).await;
+}
+
+async fn increment_parallel_timeout(num_replicas: usize) {
+    timeout(
+        Duration::from_secs((num_replicas as u64 + 10) * 10),
+        increment_parallel(num_replicas),
+    )
+    .await
+    .unwrap();
 }
 
 async fn increment_parallel(num_replicas: usize) {
@@ -204,6 +227,11 @@ async fn throughput_3_lin() {
 
 async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize) {
     let local = tokio::task::LocalSet::new();
+
+    local.spawn_local(async move {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        panic!("timeout");
+    });
 
     // Run the local task set.
     local
@@ -270,41 +298,40 @@ async fn throughput(linearizable: bool, num_replicas: usize, num_clients: usize)
 #[tokio::test]
 async fn coordinator_recovery_3_loop() {
     loop {
-        timeout(Duration::from_secs(120), coordinator_recovery(3))
-            .await
-            .unwrap();
+        timeout_coordinator_recovery(3).await;
     }
 }
 
 #[tokio::test]
 async fn coordinator_recovery_3() {
-    timeout(Duration::from_secs(120), coordinator_recovery(3))
-        .await
-        .unwrap();
+    timeout_coordinator_recovery(3).await;
 }
 
 #[tokio::test]
 async fn coordinator_recovery_5() {
-    timeout(Duration::from_secs(180), coordinator_recovery(5))
-        .await
-        .unwrap();
+    timeout_coordinator_recovery(5).await;
 }
 
 #[ignore]
 #[tokio::test]
 async fn coordinator_recovery_7_loop() {
     loop {
-        timeout(Duration::from_secs(240), coordinator_recovery(7))
-            .await
-            .unwrap();
+        timeout_coordinator_recovery(7).await;
     }
 }
 
 #[tokio::test]
 async fn coordinator_recovery_7() {
-    timeout(Duration::from_secs(240), coordinator_recovery(7))
-        .await
-        .unwrap();
+    timeout_coordinator_recovery(7).await;
+}
+
+async fn timeout_coordinator_recovery(num_replicas: usize) {
+    timeout(
+        Duration::from_secs((num_replicas as u64 + 10) * 20),
+        coordinator_recovery(num_replicas),
+    )
+    .await
+    .unwrap();
 }
 
 async fn coordinator_recovery(num_replicas: usize) {

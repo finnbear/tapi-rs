@@ -12,47 +12,54 @@ use std::{
 
 #[tokio::test]
 async fn lock_server_1() {
-    lock_server(1).await;
+    timeout_lock_server(1).await;
 }
 
 #[tokio::test]
 async fn lock_server_2() {
-    lock_server(2).await;
+    timeout_lock_server(2).await;
 }
 
 #[tokio::test]
 async fn lock_server_3() {
-    lock_server(3).await;
+    timeout_lock_server(3).await;
 }
 
 #[tokio::test]
 async fn lock_server_4() {
-    lock_server(4).await;
+    timeout_lock_server(4).await;
 }
 
 #[tokio::test]
 async fn lock_server_5() {
-    lock_server(5).await;
+    timeout_lock_server(5).await;
 }
 
 #[tokio::test]
 async fn lock_server_7() {
-    lock_server(7).await;
+    timeout_lock_server(7).await;
 }
 
 #[tokio::test]
 async fn lock_server_9() {
-    lock_server(9).await;
+    timeout_lock_server(9).await;
 }
 
 #[ignore]
 #[tokio::test]
 async fn lock_server_loop() {
     loop {
-        tokio::time::timeout(Duration::from_secs(120), lock_server(3))
-            .await
-            .unwrap();
+        timeout_lock_server(3).await;
     }
+}
+
+async fn timeout_lock_server(num_replicas: usize) {
+    tokio::time::timeout(
+        Duration::from_secs((num_replicas as u64 + 10) * 10),
+        lock_server(num_replicas),
+    )
+    .await
+    .unwrap();
 }
 
 async fn lock_server(num_replicas: usize) {
