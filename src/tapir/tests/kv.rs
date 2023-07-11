@@ -3,8 +3,8 @@ use rand::{thread_rng, Rng};
 use tokio::time::timeout;
 
 use crate::{
-    ChannelRegistry, ChannelTransport, IrMembership, IrReplica, TapirClient, TapirReplica,
-    TapirTimestamp, Transport as _,
+    ChannelRegistry, ChannelTransport, IrMembership, IrReplica, TapirClient,
+    TapirReplica, TapirTimestamp, Transport as _,
 };
 use std::{
     sync::{
@@ -45,7 +45,7 @@ fn build_kv(
                 let weak = weak.clone();
                 let channel =
                     registry.channel(move |from, message| weak.upgrade()?.receive(from, message));
-                let upcalls = TapirReplica::new(linearizable);
+                let upcalls = TapirReplica::new(crate::ShardNumber(0), linearizable);
                 IrReplica::new(membership.clone(), upcalls, channel)
             },
         )
@@ -57,13 +57,12 @@ fn build_kv(
 
     fn create_client(
         registry: &ChannelRegistry<TapirReplica<K, V>>,
-        membership: &IrMembership<usize>,
     ) -> Arc<TapirClient<K, V, ChannelTransport<TapirReplica<K, V>>>> {
         let channel = registry.channel(move |_, _| unreachable!());
-        Arc::new(TapirClient::new(membership.clone(), channel))
+        Arc::new(TapirClient::new(channel))
     }
 
-    let clients = std::iter::repeat_with(|| create_client(&registry, &membership))
+    let clients = std::iter::repeat_with(|| create_client(&registry))
         .take(num_clients)
         .collect::<Vec<_>>();
 

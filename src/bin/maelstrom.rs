@@ -19,7 +19,9 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tapirs::{IrMembership, IrMessage, IrReplica, TapirClient, TapirReplica, Transport};
+use tapirs::{
+    IrMembership, IrMessage, IrReplica, TapirClient, TapirReplica, TapirTransport, Transport,
+};
 use tokio::spawn;
 
 type K = String;
@@ -193,6 +195,20 @@ impl Transport<TapirReplica<K, V>> for Maelstrom {
     }
 }
 
+impl TapirTransport<K, V> for Maelstrom {
+    fn shard_addresses(
+        &self,
+        shard: tapirs::ShardNumber,
+    ) -> impl futures::Future<Output = IrMembership<Self::Address>> + Send + 'static {
+        assert_eq!(shard.0, 0);
+        std::future::ready(IrMembership::new(vec![
+            IdEnum::Replica(0),
+            IdEnum::Replica(1),
+            IdEnum::Replica(2),
+        ]))
+    }
+}
+
 #[async_trait]
 impl Process<LinKv, Wrapper> for KvNode {
     fn init(
@@ -219,12 +235,10 @@ impl Process<LinKv, Wrapper> for KvNode {
             match id {
                 IdEnum::Replica(_) => KvNodeInner::Replica(Arc::new(IrReplica::new(
                     membership,
-                    TapirReplica::new(true),
+                    TapirReplica::new(tapirs::ShardNumber(0), true),
                     transport,
                 ))),
-                IdEnum::App(_) => {
-                    KvNodeInner::App(Arc::new(TapirClient::new(membership, transport)))
-                }
+                IdEnum::App(_) => KvNodeInner::App(Arc::new(TapirClient::new(transport))),
                 id => panic!("{id}"),
             },
         ));

@@ -39,6 +39,12 @@ Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-
   - [ ] Reduce allocations
   - [ ] Reduce temporary unavailability
 
-  ## Acknowledgement
+## Acknowledgements
 
-  Thank you to the TAPIR authors for answering my questions about the paper!
+Thanks to [James Wilcox](https://jamesrwilcox.com) for assigning TAPIR as a reading.
+
+Thanks to [the TAPIR authors](https://github.com/UWSysLab/tapir#contact-and-questions) for answering questions about
+the paper!
+
+Thanks to [Kyle](https://aphyr.com) at [Jepsen](https://jepsen.io) for clarifying the relative
+strength of isolation levels.

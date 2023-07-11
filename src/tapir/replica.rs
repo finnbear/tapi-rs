@@ -1,4 +1,4 @@
-use super::{Key, Timestamp, Value, CO, CR, IO, UO, UR};
+use super::{Key, ShardNumber, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::ir::ReplyUnlogged;
 use crate::util::vectorize;
 use crate::{
@@ -42,9 +42,9 @@ pub struct Replica<K, V> {
 }
 
 impl<K: Key, V: Value> Replica<K, V> {
-    pub fn new(linearizable: bool) -> Self {
+    pub fn new(shard: ShardNumber, linearizable: bool) -> Self {
         Self {
-            inner: OccStore::new(linearizable),
+            inner: OccStore::new(shard, linearizable),
             transaction_log: HashMap::new(),
             gc_watermark: 0,
             min_prepare_time: 0,
@@ -277,8 +277,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                         "{transaction_id:?} committed at (different) {ts:?}"
                     );
                 }
-                self.inner
-                    .commit(*transaction_id, transaction.clone(), *commit);
+                self.inner.commit(*transaction_id, transaction, *commit);
             }
             IO::Abort {
                 transaction_id,
