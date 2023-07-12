@@ -461,7 +461,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                                     })
                                     .map(|(_, r)| r.addendum.as_ref().unwrap().record.clone())
                                     .collect::<Vec<_>>();
-                        
+
                                 eprintln!(
                                     "have {} latest ({:?})",
                                     latest_records.len(),
@@ -608,7 +608,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                             sync.latest_normal_view.number = msg_view_number;
                             sync.latest_normal_view.membership = sync.view.membership.clone();
                             self.persist_view_info(&*sync);
-                            
+
                             for address in destinations {
                                 if address == self.inner.transport.address() {
                                     continue;

@@ -3,8 +3,8 @@ use rand::{thread_rng, Rng};
 use tokio::time::timeout;
 
 use crate::{
-    ChannelRegistry, ChannelTransport, IrMembership, IrReplica, TapirClient,
-    TapirReplica, TapirTimestamp, Transport as _,
+    ChannelRegistry, ChannelTransport, IrMembership, IrReplica, TapirClient, TapirReplica,
+    TapirTimestamp, Transport as _,
 };
 use std::{
     sync::{
@@ -54,6 +54,8 @@ fn build_kv(
     let replicas = std::iter::repeat_with(|| create_replica(&registry, &membership, linearizable))
         .take(num_replicas)
         .collect::<Vec<_>>();
+
+    registry.put_shard_addresses(crate::ShardNumber(0), membership.clone());
 
     fn create_client(
         registry: &ChannelRegistry<TapirReplica<K, V>>,

@@ -26,4 +26,7 @@ pub use occ::{
 pub use tapir::{
     Client as TapirClient, Replica as TapirReplica, ShardNumber, Timestamp as TapirTimestamp,
 };
-pub use transport::{Message as TransportMessage, Transport, TapirTransport, Channel as ChannelTransport, ChannelRegistry};
+pub use transport::{
+    Channel as ChannelTransport, ChannelRegistry, Message as TransportMessage, TapirTransport,
+    Transport,
+};

@@ -155,6 +155,7 @@ impl<K: Key, V: Value, T: TapirTransport<K, V>> Transaction<K, V, T> {
             let lock = inner.lock().unwrap();
             lock.inner.clone()
         };
+
         let min_commit_timestamp = max_read_timestamp(&transaction).saturating_add(1);
         let mut timestamp = {
             let client = self.client.lock().unwrap();
@@ -166,6 +167,11 @@ impl<K: Key, V: Value, T: TapirTransport<K, V>> Transaction<K, V, T> {
         let participants = transaction.participants();
 
         async move {
+            // Writes are buffered; make sure the shard clients exist.
+            for key in transaction.write_set.keys() {
+                Inner::shard_client(&client, key.shard).await;
+            }
+
             let mut remaining_tries = 3u8;
 
             loop {

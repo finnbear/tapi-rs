@@ -66,6 +66,11 @@ impl<U: IrReplicaUpcalls> Registry<U> {
             inner: Arc::clone(&self.inner),
         }
     }
+
+    pub fn put_shard_addresses(&self, shard: ShardNumber, membership: IrMembership<usize>) {
+        let mut inner = self.inner.write().unwrap();
+        inner.shards.insert(shard, membership);
+    }
 }
 
 pub struct Channel<U: IrReplicaUpcalls> {
