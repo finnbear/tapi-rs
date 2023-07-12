@@ -108,6 +108,14 @@ impl<TS: Timestamp> PrepareResult<TS> {
     pub fn is_retry(&self) -> bool {
         matches!(self, Self::Retry { .. })
     }
+
+    pub fn is_too_late(&self) -> bool {
+        matches!(self, Self::TooLate)
+    }
+
+    pub fn is_too_old(&self) -> bool {
+        matches!(self, Self::TooOld)
+    }
 }
 
 impl<K: Key, V: Value, TS> Store<K, V, TS> {

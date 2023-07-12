@@ -2,6 +2,7 @@ use super::{Key, ShardClient, ShardNumber, Sharded, Timestamp, Value};
 use crate::{
     util::join, IrClientId, OccPrepareResult, OccTransaction, OccTransactionId, TapirTransport,
 };
+use futures::future::join_all;
 use rand::{thread_rng, Rng};
 use std::{
     collections::HashMap,
@@ -188,14 +189,18 @@ impl<K: Key, V: Value, T: TapirTransport<K, V>> Transaction<K, V, T> {
                     .until(
                         |results: &HashMap<ShardNumber, OccPrepareResult<Timestamp>>,
                          _cx: &mut Context<'_>| {
-                            results.values().any(|v| v.is_fail() || v.is_abstain())
+                            results.values().any(|v| {
+                                v.is_fail() || v.is_abstain() || v.is_too_late() || v.is_too_old()
+                            })
                         },
                     )
                     .await;
 
-                let result = results.values().next().unwrap();
+                if results.values().any(|v| v.is_too_late() || v.is_too_old()) {
+                    continue;
+                }
 
-                if let OccPrepareResult::Retry { proposed } = &result && let Some(new_remaining_tries) = remaining_tries.checked_sub(1) {
+                if participants.len() == 1 && let Some(OccPrepareResult::Retry { proposed }) = results.values().next() && let Some(new_remaining_tries) = remaining_tries.checked_sub(1) {
                     remaining_tries = new_remaining_tries;
 
                     let new_time =  client.lock().unwrap().transport.time().max(proposed.saturating_add(1)).max(min_commit_timestamp);
@@ -204,21 +209,20 @@ impl<K: Key, V: Value, T: TapirTransport<K, V>> Transaction<K, V, T> {
                         continue;
                     }
                 }
-                if matches!(result, OccPrepareResult::TooLate | OccPrepareResult::TooOld) {
-                    continue;
-                }
-                let ok = matches!(result, OccPrepareResult::Ok);
+
+                // Ok if all participant shards are ok.
+                let ok = results.len() == participants.len() && results.values().all(|r| r.is_ok());
+
                 if !only_prepare {
                     let future = {
                         let client = client.lock().unwrap();
-                        join(participants.iter().map(|shard| {
+                        join_all(participants.iter().map(|shard| {
                             let shard_client = client.clients.get(shard).unwrap();
-                            let future = shard_client.end(id, &transaction, timestamp, ok);
-                            (*shard, future)
+                            shard_client.end(id, &transaction, timestamp, ok)
                         }))
                     };
 
-                    future.until(1 /* TODO */).await;
+                    future.await;
                 }
 
                 if ok && remaining_tries != 3 {
