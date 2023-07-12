@@ -23,12 +23,13 @@ Rust implementation of [TAPIR](https://syslab.cs.washington.edu/papers/tapir-tr-
   - [x] Coordinator recovery
   - [x] Sharding
   - [ ] Persistent storage (e.g. `sled`)
-  - [ ] Pessimistic read only transactions
+  - [ ] Snapshot read
 - [ ] Planned extensions
   - [x] Delete key operation
   - [ ] Garbage collection
-  - [ ] Quorum range scan
+  - [ ] Range scan
   - [ ] Automatic shard balancing
+  - [ ] Disaster recovery
 - [ ] Testing
   - [x] IR lock server (very simple)
   - [x] TAPIR-KV (simple)
