@@ -1,11 +1,9 @@
+use crate::{
+    tapir::Sharded, ChannelRegistry, ChannelTransport, IrMembership, IrReplica, ShardNumber,
+    TapirClient, TapirReplica, TapirTimestamp, Transport as _,
+};
 use futures::future::join_all;
 use rand::{thread_rng, Rng};
-use tokio::time::timeout;
-
-use crate::{
-    ChannelRegistry, ChannelTransport, IrMembership, IrReplica, TapirClient, TapirReplica,
-    TapirTimestamp, Transport as _,
-};
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -13,28 +11,28 @@ use std::{
     },
     time::Duration,
 };
+use tokio::time::timeout;
 
 type K = i64;
 type V = i64;
 type Transport = ChannelTransport<TapirReplica<K, V>>;
 
-fn build_kv(
+fn build_shard(
+    shard: ShardNumber,
     linearizable: bool,
     num_replicas: usize,
-    num_clients: usize,
-) -> (
-    Vec<Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<TapirReplica<K, V>>>>>,
-    Vec<Arc<TapirClient<K, V, ChannelTransport<TapirReplica<K, V>>>>>,
-) {
-    println!("---------------------------");
-    println!(" linearizable={linearizable} num_replicas={num_replicas}");
-    println!("---------------------------");
-
-    let registry = ChannelRegistry::default();
-    let membership = IrMembership::new((0..num_replicas).collect::<Vec<_>>());
+    registry: &ChannelRegistry<TapirReplica<K, V>>,
+) -> Vec<Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<TapirReplica<K, V>>>>> {
+    let initial_address = registry.len();
+    let membership = IrMembership::new(
+        (0..num_replicas)
+            .map(|n| n + initial_address)
+            .collect::<Vec<_>>(),
+    );
 
     fn create_replica(
         registry: &ChannelRegistry<TapirReplica<K, V>>,
+        shard: ShardNumber,
         membership: &IrMembership<usize>,
         linearizable: bool,
     ) -> Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<TapirReplica<K, V>>>> {
@@ -45,7 +43,7 @@ fn build_kv(
                 let weak = weak.clone();
                 let channel =
                     registry.channel(move |from, message| weak.upgrade()?.receive(from, message));
-                let upcalls = TapirReplica::new(crate::ShardNumber(0), linearizable);
+                let upcalls = TapirReplica::new(shard, linearizable);
                 IrReplica::new(
                     membership.clone(),
                     upcalls,
@@ -56,12 +54,20 @@ fn build_kv(
         )
     }
 
-    let replicas = std::iter::repeat_with(|| create_replica(&registry, &membership, linearizable))
-        .take(num_replicas)
-        .collect::<Vec<_>>();
+    let replicas =
+        std::iter::repeat_with(|| create_replica(&registry, shard, &membership, linearizable))
+            .take(num_replicas)
+            .collect::<Vec<_>>();
 
-    registry.put_shard_addresses(crate::ShardNumber(0), membership.clone());
+    registry.put_shard_addresses(shard, membership.clone());
 
+    replicas
+}
+
+fn build_clients(
+    num_clients: usize,
+    registry: &ChannelRegistry<TapirReplica<K, V>>,
+) -> Vec<Arc<TapirClient<K, V, ChannelTransport<TapirReplica<K, V>>>>> {
     fn create_client(
         registry: &ChannelRegistry<TapirReplica<K, V>>,
     ) -> Arc<TapirClient<K, V, ChannelTransport<TapirReplica<K, V>>>> {
@@ -73,7 +79,50 @@ fn build_kv(
         .take(num_clients)
         .collect::<Vec<_>>();
 
-    (replicas, clients)
+    clients
+}
+
+fn build_kv(
+    linearizable: bool,
+    num_replicas: usize,
+    num_clients: usize,
+) -> (
+    Vec<Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<TapirReplica<K, V>>>>>,
+    Vec<Arc<TapirClient<K, V, ChannelTransport<TapirReplica<K, V>>>>>,
+) {
+    let (mut shards, clients) = build_sharded_kv(linearizable, 1, num_replicas, num_clients);
+    (shards.remove(0), clients)
+}
+
+fn build_sharded_kv(
+    linearizable: bool,
+    num_shards: usize,
+    num_replicas: usize,
+    num_clients: usize,
+) -> (
+    Vec<Vec<Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<TapirReplica<K, V>>>>>>,
+    Vec<Arc<TapirClient<K, V, ChannelTransport<TapirReplica<K, V>>>>>,
+) {
+    println!("---------------------------");
+    println!(" linearizable={linearizable} num_shards={num_shards} num_replicas={num_replicas}");
+    println!("---------------------------");
+
+    let registry = ChannelRegistry::default();
+
+    let mut shards = Vec::new();
+    for shard in 0..num_shards {
+        let replicas = build_shard(
+            ShardNumber(shard as u32),
+            linearizable,
+            num_replicas,
+            &registry,
+        );
+        shards.push(replicas);
+    }
+
+    let clients = build_clients(num_clients, &registry);
+
+    (shards, clients)
 }
 
 #[tokio::test]
@@ -136,6 +185,37 @@ async fn rwr(linearizable: bool, num_replicas: usize) {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn sharded() {
+    let (_shards, clients) = build_sharded_kv(true, 5, 3, 2);
+
+    let txn = clients[0].begin();
+    assert_eq!(
+        txn.get(Sharded {
+            shard: ShardNumber(0),
+            key: 0
+        })
+        .await,
+        None
+    );
+    assert_eq!(
+        txn.get(Sharded {
+            shard: ShardNumber(1),
+            key: 0
+        })
+        .await,
+        None
+    );
+    txn.put(
+        Sharded {
+            shard: ShardNumber(2),
+            key: 0,
+        },
+        Some(0),
+    );
+    assert!(txn.commit().await.is_some());
 }
 
 #[tokio::test]

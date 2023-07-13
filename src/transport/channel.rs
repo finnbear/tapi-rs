@@ -71,6 +71,10 @@ impl<U: IrReplicaUpcalls> Registry<U> {
         let mut inner = self.inner.write().unwrap();
         inner.shards.insert(shard, membership);
     }
+
+    pub fn len(&self) -> usize {
+        self.inner.read().unwrap().callbacks.len()
+    }
 }
 
 pub struct Channel<U: IrReplicaUpcalls> {
