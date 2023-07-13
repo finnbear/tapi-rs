@@ -1,10 +1,11 @@
-use super::{Key, Timestamp, Value, CO, CR, IO, UO, UR};
+use super::{Key, ShardNumber, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::ir::ReplyUnlogged;
 use crate::util::vectorize;
 use crate::{
     IrClient, IrMembership, IrMembershipSize, IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult,
-    OccStore, OccTransaction, OccTransactionId, Transport,
+    OccStore, OccTransaction, OccTransactionId, TapirTransport,
 };
+use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::task::Context;
 use std::time::Duration;
@@ -42,9 +43,9 @@ pub struct Replica<K, V> {
 }
 
 impl<K: Key, V: Value> Replica<K, V> {
-    pub fn new(linearizable: bool) -> Self {
+    pub fn new(shard: ShardNumber, linearizable: bool) -> Self {
         Self {
-            inner: OccStore::new(linearizable),
+            inner: OccStore::new(shard, linearizable),
             transaction_log: HashMap::new(),
             gc_watermark: 0,
             min_prepare_time: 0,
@@ -52,18 +53,25 @@ impl<K: Key, V: Value> Replica<K, V> {
         }
     }
 
-    fn recover_coordination<T: Transport<Self>>(
+    fn recover_coordination<T: TapirTransport<K, V>>(
         transaction_id: OccTransactionId,
         transaction: OccTransaction<K, V, Timestamp>,
         commit: Timestamp,
-        membership: IrMembership<T::Address>,
+        // TODO: Optimize.
+        _membership: IrMembership<T::Address>,
         transport: T,
     ) -> impl Future<Output = ()> {
         eprintln!("trying to recover {transaction_id:?}");
-        let client = IrClient::<Self, T>::new(membership, transport);
+
         async move {
-            let min_prepare = client
-                .invoke_consensus(
+            let mut participants = HashMap::new();
+            for shard in transaction.participants() {
+                let membership = transport.shard_addresses(shard).await;
+                participants.insert(shard, IrClient::new(membership, transport.clone()));
+            }
+
+            let min_prepares = join_all(participants.values().map(|client| {
+                client.invoke_consensus(
                     CO::RaiseMinPrepareTime {
                         time: commit.time + 1,
                     },
@@ -98,15 +106,22 @@ impl<K: Key, V: Value> Replica<K, V> {
                         }
                     },
                 )
-                .await;
+            }))
+            .await;
 
-            let CR::RaiseMinPrepareTime { time: min_prepare_time } = min_prepare else {
-                debug_assert!(false);
-                return;
-            };
+            if min_prepares.into_iter().any(|min_prepare| {
+                let CR::RaiseMinPrepareTime { time: min_prepare_time } = min_prepare else {
+                    debug_assert!(false);
+                    return true;
+                };
 
-            if commit.time >= min_prepare_time {
-                // Not ready.
+                if commit.time >= min_prepare_time {
+                    // Not ready.
+                    return true;
+                }
+
+                false
+            }) {
                 return;
             }
 
@@ -148,48 +163,62 @@ impl<K: Key, V: Value> Replica<K, V> {
                 )
             }
 
-            let (future, membership) = client.invoke_unlogged_joined(UO::CheckPrepare {
-                transaction_id,
-                commit,
-            });
+            let results = join_all(participants.values().map(|client| {
+                let (future, membership) = client.invoke_unlogged_joined(UO::CheckPrepare {
+                    transaction_id,
+                    commit,
+                });
 
-            let mut timeout = std::pin::pin!(T::sleep(Duration::from_millis(1000)));
-            let results = future
-                .until(
-                    |results: &HashMap<T::Address, ReplyUnlogged<UR<V>, T::Address>>,
-                     cx: &mut Context<'_>| {
-                        decide(results, membership).is_some()
-                            || timeout.as_mut().poll(cx).is_ready()
-                    },
-                )
-                .await;
+                async move {
+                    let mut timeout = std::pin::pin!(T::sleep(Duration::from_millis(1000)));
 
-            let Some(result) = decide(&results, membership) else {
+                    let results = future
+                        .until(
+                            |results: &HashMap<T::Address, ReplyUnlogged<UR<V>, T::Address>>,
+                             cx: &mut Context<'_>| {
+                                decide(results, membership).is_some()
+                                    || timeout.as_mut().poll(cx).is_ready()
+                            },
+                        )
+                        .await;
+                    decide(&results, membership)
+                }
+            }))
+            .await;
+
+            if results.iter().any(|r| r.is_none()) {
+                // Try again later.
                 return;
-            };
-
-            eprintln!("BACKUP COORD got {result:?} for {transaction_id:?} @ {commit:?}");
-
-            match result {
-                OccPrepareResult::Ok => {
-                    client
-                        .invoke_inconsistent(IO::Commit {
-                            transaction_id,
-                            transaction,
-                            commit,
-                        })
-                        .await
-                }
-                OccPrepareResult::Fail | OccPrepareResult::TooLate => {
-                    client
-                        .invoke_inconsistent(IO::Abort {
-                            transaction_id,
-                            commit: Some(commit),
-                        })
-                        .await
-                }
-                _ => {}
             }
+
+            let ok = results
+                .iter()
+                .all(|r| matches!(r, Some(OccPrepareResult::Ok)));
+
+            eprintln!("BACKUP COORD got ok={ok} for {transaction_id:?} @ {commit:?}");
+
+            join_all(participants.values().map(|client| {
+                let transaction = transaction.clone();
+                async move {
+                    if ok {
+                        client
+                            .invoke_inconsistent(IO::Commit {
+                                transaction_id,
+                                transaction,
+                                commit,
+                            })
+                            .await
+                    } else {
+                        client
+                            .invoke_inconsistent(IO::Abort {
+                                transaction_id,
+                                commit: Some(commit),
+                            })
+                            .await
+                    }
+                }
+            }))
+            .await;
         }
     }
 }
@@ -277,8 +306,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                         "{transaction_id:?} committed at (different) {ts:?}"
                     );
                 }
-                self.inner
-                    .commit(*transaction_id, transaction.clone(), *commit);
+                self.inner.commit(*transaction_id, transaction, *commit);
             }
             IO::Abort {
                 transaction_id,
@@ -573,8 +601,14 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
 
         ret
     }
+}
 
-    fn tick<T: Transport<Self>>(&mut self, membership: &IrMembership<T::Address>, transport: &T) {
+impl<K: Key, V: Value> Replica<K, V> {
+    pub fn tick<T: TapirTransport<K, V>>(
+        &self,
+        transport: &T,
+        membership: &IrMembership<T::Address>,
+    ) {
         eprintln!(
             "there are {} prepared transactions",
             self.inner.prepared.len()

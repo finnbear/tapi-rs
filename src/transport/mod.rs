@@ -1,4 +1,7 @@
-use crate::{IrMessage, IrReplicaUpcalls};
+use crate::{
+    tapir::{Key, Value},
+    IrMembership, IrMessage, IrReplicaUpcalls, ShardNumber, TapirReplica,
+};
 pub use channel::{Channel, Registry as ChannelRegistry};
 pub use message::Message;
 use serde::{de::DeserializeOwned, Serialize};
@@ -35,13 +38,13 @@ pub trait Transport<U: IrReplicaUpcalls>: Clone + Send + Sync + 'static {
     /// Sleep for duration.
     fn sleep(duration: Duration) -> Self::Sleep;
 
-    /// Synchronously persist a key-value pair. Any future calls
-    /// to `persisted` should return this value unless/until it
-    /// is overwritten.
-    // TODO: Allow safe expiration mechanism for checkpoints.
+    /// Synchronously and atomically persist a key-value pair. Any
+    /// future calls to `persisted` should return this value
+    /// unless/until it is overwritten.
     fn persist<T: Serialize>(&self, key: &str, value: Option<&T>);
 
-    /// Synchronously load a persisted key-value pair.
+    /// Synchronously load the last key-value pair successfully persisted
+    /// at the given key.
     fn persisted<T: DeserializeOwned>(&self, key: &str) -> Option<T>;
 
     /// Send/retry, ignoring any errors, until there is a reply.
@@ -53,4 +56,13 @@ pub trait Transport<U: IrReplicaUpcalls>: Clone + Send + Sync + 'static {
 
     /// Send once and don't wait for a reply.
     fn do_send(&self, address: Self::Address, message: impl Into<IrMessage<U, Self>> + Debug);
+}
+
+pub trait TapirTransport<K: Key, V: Value>: Transport<TapirReplica<K, V>> {
+    /// Look up the addresses of replicas in a shard, on a best-effort basis; results
+    /// may be arbitrarily out of date.
+    fn shard_addresses(
+        &self,
+        shard: ShardNumber,
+    ) -> impl Future<Output = IrMembership<Self::Address>> + Send + 'static;
 }

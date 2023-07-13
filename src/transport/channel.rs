@@ -1,5 +1,8 @@
-use super::Transport;
-use crate::{IrMessage, IrReplicaUpcalls};
+use super::{TapirTransport, Transport};
+use crate::{
+    tapir::{Key, Value},
+    IrMembership, IrMessage, IrReplicaUpcalls, ShardNumber, TapirReplica,
+};
 use rand::{thread_rng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -34,12 +37,14 @@ struct Inner<U: IrReplicaUpcalls> {
                 + Sync,
         >,
     >,
+    shards: HashMap<ShardNumber, IrMembership<usize>>,
 }
 
 impl<U: IrReplicaUpcalls> Default for Inner<U> {
     fn default() -> Self {
         Self {
             callbacks: Vec::new(),
+            shards: Default::default(),
         }
     }
 }
@@ -60,6 +65,15 @@ impl<U: IrReplicaUpcalls> Registry<U> {
             persistent: Default::default(),
             inner: Arc::clone(&self.inner),
         }
+    }
+
+    pub fn put_shard_addresses(&self, shard: ShardNumber, membership: IrMembership<usize>) {
+        let mut inner = self.inner.write().unwrap();
+        inner.shards.insert(shard, membership);
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.read().unwrap().callbacks.len()
     }
 }
 
@@ -204,6 +218,27 @@ impl<U: IrReplicaUpcalls> Transport<U> for Channel<U> {
                     Self::random_delay(1..50).await;
                     callback(from, message);
                 });
+            }
+        }
+    }
+}
+
+impl<K: Key, V: Value> TapirTransport<K, V> for Channel<TapirReplica<K, V>> {
+    fn shard_addresses(
+        &self,
+        shard: ShardNumber,
+    ) -> impl Future<Output = IrMembership<Self::Address>> + Send + 'static {
+        let inner = Arc::clone(&self.inner);
+        async move {
+            loop {
+                {
+                    let inner = inner.read().unwrap();
+                    if let Some(membership) = inner.shards.get(&shard) {
+                        break membership.clone();
+                    }
+                }
+
+                <Self as Transport<TapirReplica<K, V>>>::sleep(Duration::from_millis(100)).await;
             }
         }
     }

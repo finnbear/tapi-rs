@@ -27,7 +27,7 @@ use tokio::select;
 pub struct Id(pub u64);
 
 impl Id {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self(thread_rng().gen())
     }
 }
@@ -93,6 +93,10 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
 
     pub fn id(&self) -> Id {
         self.id
+    }
+
+    pub fn set_id(&mut self, id: Id) {
+        self.id = id;
     }
 
     pub fn transport(&self) -> &T {

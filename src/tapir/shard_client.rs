@@ -1,144 +1,71 @@
-use super::{Key, Replica, Timestamp, Value, CO, CR, IO, UO, UR};
+use super::{Key, Replica, ShardNumber, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::{
     transport::Transport, IrClient, IrClientId, IrMembership, OccPrepareResult, OccTransaction,
     OccTransactionId,
 };
-use std::{
-    collections::HashMap,
-    future::Future,
-    sync::{Arc, Mutex},
-};
+use std::future::Future;
 
 pub struct ShardClient<K: Key, V: Value, T: Transport<Replica<K, V>>> {
+    shard: ShardNumber,
     inner: IrClient<Replica<K, V>, T>,
 }
 
-impl<K: Key, V: Value, T: Transport<Replica<K, V>>> ShardClient<K, V, T> {
-    pub fn new(membership: IrMembership<T::Address>, transport: T) -> Self {
-        Self {
-            inner: IrClient::new(membership, transport),
-        }
-    }
-
-    // TODO: Use same id for all shards?
-    pub fn id(&self) -> IrClientId {
-        self.inner.id()
-    }
-
-    pub fn begin(&self, transaction_id: OccTransactionId) -> ShardTransaction<K, V, T> {
-        ShardTransaction::new(self.inner.clone(), transaction_id)
-    }
-}
-
-pub struct ShardTransaction<K: Key, V: Value, T: Transport<Replica<K, V>>> {
-    pub client: IrClient<Replica<K, V>, T>,
-    inner: Arc<Mutex<Inner<K, V>>>,
-}
-
-impl<K: Key, V: Value, T: Transport<Replica<K, V>>> Clone for ShardTransaction<K, V, T> {
+impl<K: Key, V: Value, T: Transport<Replica<K, V>>> Clone for ShardClient<K, V, T> {
     fn clone(&self) -> Self {
         Self {
-            client: self.client.clone(),
-            inner: Arc::clone(&self.inner),
+            shard: self.shard,
+            inner: self.inner.clone(),
         }
     }
 }
 
-struct Inner<K: Key, V: Value> {
-    id: OccTransactionId,
-    inner: OccTransaction<K, V, Timestamp>,
-    read_cache: HashMap<K, Option<V>>,
-}
+impl<K: Key, V: Value, T: Transport<Replica<K, V>>> ShardClient<K, V, T> {
+    pub fn new(
+        id: IrClientId,
+        shard: ShardNumber,
+        membership: IrMembership<T::Address>,
+        transport: T,
+    ) -> Self {
+        let mut inner = IrClient::new(membership, transport);
 
-impl<K: Key, V: Value, T: Transport<Replica<K, V>>> ShardTransaction<K, V, T> {
-    fn new(client: IrClient<Replica<K, V>, T>, id: OccTransactionId) -> Self {
-        Self {
-            client,
-            inner: Arc::new(Mutex::new(Inner {
-                id,
-                inner: Default::default(),
-                read_cache: Default::default(),
-            })),
-        }
+        // Id of all shard clients must match for the timestamps to match during recovery.
+        inner.set_id(id);
+
+        Self { shard, inner }
     }
 
-    pub fn max_read_timestamp(&self) -> u64 {
-        self.inner
-            .lock()
-            .unwrap()
-            .inner
-            .read_set
-            .values()
-            .map(|v| v.time)
-            .max()
-            .unwrap_or_default()
-    }
-
-    pub fn get(&self, key: K) -> impl Future<Output = Option<V>> + Send {
-        let client = self.client.clone();
-        let inner = Arc::clone(&self.inner);
+    pub fn get(
+        &self,
+        key: K,
+        timestamp: Option<Timestamp>,
+    ) -> impl Future<Output = (Option<V>, Timestamp)> {
+        let future = self.inner.invoke_unlogged(UO::Get { key, timestamp });
 
         async move {
-            loop {
-                {
-                    let lock = inner.lock().unwrap();
+            let reply = future.await;
 
-                    // Read own writes.
-                    if let Some(write) = lock.inner.write_set.get(&key) {
-                        return write.as_ref().cloned();
-                    }
+            if let UR::Get(value, timestamp) = reply {
+                (value, timestamp)
+            } else {
+                debug_assert!(false);
 
-                    // Consistent reads.
-                    if let Some(read) = lock.read_cache.get(&key) {
-                        return read.as_ref().cloned();
-                    }
-                }
-
-                let future = client.invoke_unlogged(UO::Get {
-                    key: key.clone(),
-                    timestamp: None,
-                });
-
-                let reply = future.await;
-
-                let UR::Get(value, timestamp) = reply else {
-                    debug_assert!(false);
-                    continue;
-                };
-
-                let mut lock = inner.lock().unwrap();
-
-                // Read own writes.
-                if let Some(write) = lock.inner.write_set.get(&key) {
-                    return write.as_ref().cloned();
-                }
-
-                // Consistent reads.
-                if let Some(read) = lock.read_cache.get(&key) {
-                    return read.as_ref().cloned();
-                }
-
-                lock.read_cache.insert(key.clone(), value.clone());
-                lock.inner.add_read(key, timestamp);
-                return value;
+                // Was valid at the beginning of time (the transaction will
+                // abort if that's too old).
+                (None, Default::default())
             }
         }
     }
 
-    pub fn put(&self, key: K, value: Option<V>) {
-        let mut lock = self.inner.lock().unwrap();
-        lock.inner.add_write(key, value);
-    }
-
     pub fn prepare(
         &self,
+        transaction_id: OccTransactionId,
+        transaction: &OccTransaction<K, V, Timestamp>,
         timestamp: Timestamp,
     ) -> impl Future<Output = OccPrepareResult<Timestamp>> + Send {
-        let lock = self.inner.lock().unwrap();
-        let future = self.client.invoke_consensus(
+        let future = self.inner.invoke_consensus(
             CO::Prepare {
-                transaction_id: lock.id,
-                transaction: lock.inner.clone(),
+                transaction_id,
+                transaction: transaction.clone(),
                 commit: timestamp,
             },
             |results, membership_size| {
@@ -187,7 +114,6 @@ impl<K: Key, V: Value, T: Transport<Replica<K, V>>> ShardTransaction<K, V, T> {
                 })
             },
         );
-        drop(lock);
 
         async move {
             let reply = future.await;
@@ -202,23 +128,22 @@ impl<K: Key, V: Value, T: Transport<Replica<K, V>>> ShardTransaction<K, V, T> {
 
     pub fn end(
         &self,
+        transaction_id: OccTransactionId,
+        transaction: &OccTransaction<K, V, Timestamp>,
         prepared_timestamp: Timestamp,
         commit: bool,
     ) -> impl Future<Output = ()> + Send {
-        let lock = self.inner.lock().unwrap();
-        let future = self.client.invoke_inconsistent(if commit {
+        self.inner.invoke_inconsistent(if commit {
             IO::Commit {
-                transaction_id: lock.id,
-                transaction: lock.inner.clone(),
+                transaction_id,
+                transaction: transaction.clone(),
                 commit: prepared_timestamp,
             }
         } else {
             IO::Abort {
-                transaction_id: lock.id,
+                transaction_id,
                 commit: None,
             }
-        });
-        drop(lock);
-        future
+        })
     }
 }

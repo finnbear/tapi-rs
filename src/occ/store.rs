@@ -1,6 +1,6 @@
 use super::{Timestamp, Transaction, TransactionId};
 use crate::{
-    tapir::{Key, Value},
+    tapir::{Key, ShardNumber, Value},
     util::{vectorize, vectorize_btree},
     MvccStore,
 };
@@ -15,6 +15,7 @@ use std::{
 
 #[derive(Serialize, Deserialize)]
 pub struct Store<K, V, TS> {
+    shard: ShardNumber,
     linearizable: bool,
     #[serde(bound(
         serialize = "K: Serialize, V: Serialize, TS: Serialize",
@@ -99,11 +100,28 @@ impl<TS: Timestamp> PrepareResult<TS> {
     pub fn is_fail(&self) -> bool {
         matches!(self, Self::Fail)
     }
+
+    pub fn is_abstain(&self) -> bool {
+        matches!(self, Self::Abstain)
+    }
+
+    pub fn is_retry(&self) -> bool {
+        matches!(self, Self::Retry { .. })
+    }
+
+    pub fn is_too_late(&self) -> bool {
+        matches!(self, Self::TooLate)
+    }
+
+    pub fn is_too_old(&self) -> bool {
+        matches!(self, Self::TooOld)
+    }
 }
 
 impl<K: Key, V: Value, TS> Store<K, V, TS> {
-    pub fn new(linearizable: bool) -> Self {
+    pub fn new(shard: ShardNumber, linearizable: bool) -> Self {
         Self {
+            shard,
             linearizable,
             inner: Default::default(),
             prepared: Default::default(),
@@ -174,8 +192,8 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
 
     fn occ_check(&self, transaction: &Transaction<K, V, TS>, commit: TS) -> PrepareResult<TS> {
         // Check for conflicts with the read set.
-        for (key, read) in &transaction.read_set {
-            if *read > commit {
+        for (key, read) in transaction.shard_read_set(self.shard) {
+            if read > commit {
                 debug_assert!(false, "client picked too low commit timestamp for read");
                 return PrepareResult::Retry {
                     proposed: read.time(),
@@ -183,9 +201,9 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
             }
 
             // If we don't have this key then no conflicts for read.
-            let (beginning, end) = self.inner.get_range(key, *read);
+            let (beginning, end) = self.inner.get_range(key, read);
 
-            if beginning == *read {
+            if beginning == read {
                 if let Some(end) = end && (self.linearizable || commit > end) {
                     // Read value is now invalid (not the latest version), so
                     // the prepare isn't linearizable and may not be serializable.
@@ -204,7 +222,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
                         if self.linearizable {
                             Bound::Unbounded
                         } else {
-                            Bound::Excluded(*read)
+                            Bound::Excluded(read)
                         },
                         Bound::Excluded(commit),
                     ))
@@ -218,7 +236,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
         }
 
         // Check for conflicts with the write set.
-        for key in transaction.write_set.keys() {
+        for (key, _) in transaction.shard_write_set(self.shard) {
             {
                 let (_, timestamp) = self.inner.get(key);
                 // If the last commited write is after the write...
@@ -262,13 +280,13 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
         PrepareResult::Ok
     }
 
-    pub fn commit(&mut self, id: TransactionId, transaction: Transaction<K, V, TS>, commit: TS) {
-        for (key, read) in transaction.read_set {
+    pub fn commit(&mut self, id: TransactionId, transaction: &Transaction<K, V, TS>, commit: TS) {
+        for (key, read) in transaction.shard_read_set(self.shard) {
             self.inner.commit_get(key.clone(), read, commit);
         }
 
-        for (key, value) in transaction.write_set {
-            self.inner.put(key, value, commit);
+        for (key, value) in transaction.shard_write_set(self.shard) {
+            self.inner.put(key.clone(), value.clone(), commit);
         }
 
         // Note: Transaction may not be in the prepared list of this particular replica, and that's okay.
@@ -307,13 +325,13 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
     }
 
     fn add_prepared_inner(&mut self, transaction: Transaction<K, V, TS>, commit: TS) {
-        for key in transaction.read_set.keys() {
+        for (key, _) in transaction.shard_read_set(self.shard) {
             self.prepared_reads
                 .entry(key.clone())
                 .or_default()
                 .insert(commit, ());
         }
-        for key in transaction.write_set.keys() {
+        for (key, _) in transaction.shard_write_set(self.shard) {
             self.prepared_writes
                 .entry(key.clone())
                 .or_default()
@@ -332,16 +350,16 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
     }
 
     fn remove_prepared_inner(&mut self, transaction: Transaction<K, V, TS>, commit: TS) {
-        for key in transaction.read_set.into_keys() {
-            if let Entry::Occupied(mut occupied) = self.prepared_reads.entry(key) {
+        for (key, _) in transaction.shard_read_set(self.shard) {
+            if let Entry::Occupied(mut occupied) = self.prepared_reads.entry(key.clone()) {
                 occupied.get_mut().remove(&commit);
                 if occupied.get().is_empty() {
                     occupied.remove();
                 }
             }
         }
-        for key in transaction.write_set.into_keys() {
-            if let Entry::Occupied(mut occupied) = self.prepared_writes.entry(key) {
+        for (key, _) in transaction.shard_write_set(self.shard) {
+            if let Entry::Occupied(mut occupied) = self.prepared_writes.entry(key.clone()) {
                 occupied.get_mut().remove(&commit);
                 if occupied.get().is_empty() {
                     occupied.remove();
