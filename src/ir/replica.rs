@@ -63,10 +63,6 @@ pub trait Upcalls: Sized + Send + Serialize + DeserializeOwned + 'static {
         d: HashMap<OpId, (Self::CO, Self::CR)>,
         u: Vec<(OpId, Self::CO, Self::CR)>,
     ) -> HashMap<OpId, Self::CR>;
-    fn tick<T: Transport<Self>>(&mut self, membership: &Membership<T::Address>, transport: &T) {
-        let _ = (membership, transport);
-        // No-op.
-    }
 }
 
 pub struct Replica<U: Upcalls, T: Transport<U>> {
@@ -89,10 +85,11 @@ impl<U: Upcalls, T: Transport<U>> Debug for Replica<U, T> {
 
 struct Inner<U: Upcalls, T: Transport<U>> {
     transport: T,
-    sync: Mutex<Sync<U, T>>,
+    app_tick: Option<fn(&U, &T, &Membership<T::Address>)>,
+    sync: Mutex<SyncInner<U, T>>,
 }
 
-struct Sync<U: Upcalls, T: Transport<U>> {
+struct SyncInner<U: Upcalls, T: Transport<U>> {
     status: Status,
     view: View<T::Address>,
     latest_normal_view: View<T::Address>,
@@ -113,7 +110,12 @@ struct PersistentViewInfo<A> {
 impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
     const VIEW_CHANGE_INTERVAL: Duration = Duration::from_secs(4);
 
-    pub fn new(membership: Membership<T::Address>, upcalls: U, transport: T) -> Self {
+    pub fn new(
+        membership: Membership<T::Address>,
+        upcalls: U,
+        transport: T,
+        app_tick: Option<fn(&U, &T, &Membership<T::Address>)>,
+    ) -> Self {
         let view = View {
             membership,
             number: ViewNumber(0),
@@ -121,7 +123,8 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
         let ret = Self {
             inner: Arc::new(Inner {
                 transport,
-                sync: Mutex::new(Sync {
+                app_tick,
+                sync: Mutex::new(SyncInner {
                     status: Status::Normal,
                     latest_normal_view: view.clone(),
                     view,
@@ -173,7 +176,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
         format!("ir_replica_{}", self.inner.transport.address())
     }
 
-    fn persist_view_info(&self, sync: &Sync<U, T>) {
+    fn persist_view_info(&self, sync: &SyncInner<U, T>) {
         if sync.view.membership.len() == 1 {
             return;
         }
@@ -244,12 +247,16 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                 };
                 let mut sync = inner.sync.lock().unwrap();
                 let sync = &mut *sync;
-                sync.upcalls.tick(&sync.view.membership, &transport);
+                if let Some(tick) = inner.app_tick.as_ref() {
+                    tick(&sync.upcalls, &transport, &sync.view.membership);
+                } else {
+                    break;
+                }
             }
         });
     }
 
-    fn broadcast_do_view_change(transport: &T, sync: &mut Sync<U, T>) {
+    fn broadcast_do_view_change(transport: &T, sync: &mut SyncInner<U, T>) {
         sync.changed_view_recently = true;
         let destinations = sync
             .view

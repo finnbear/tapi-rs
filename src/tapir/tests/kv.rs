@@ -46,7 +46,12 @@ fn build_kv(
                 let channel =
                     registry.channel(move |from, message| weak.upgrade()?.receive(from, message));
                 let upcalls = TapirReplica::new(crate::ShardNumber(0), linearizable);
-                IrReplica::new(membership.clone(), upcalls, channel)
+                IrReplica::new(
+                    membership.clone(),
+                    upcalls,
+                    channel,
+                    Some(TapirReplica::tick),
+                )
             },
         )
     }

@@ -237,6 +237,7 @@ impl Process<LinKv, Wrapper> for KvNode {
                     membership,
                     TapirReplica::new(tapirs::ShardNumber(0), true),
                     transport,
+                    Some(TapirReplica::tick),
                 ))),
                 IdEnum::App(_) => KvNodeInner::App(Arc::new(TapirClient::new(transport))),
                 id => panic!("{id}"),

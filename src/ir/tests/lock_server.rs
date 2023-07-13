@@ -175,7 +175,7 @@ async fn lock_server(num_replicas: usize) {
                 let channel =
                     registry.channel(move |from, message| weak.upgrade()?.receive(from, message));
                 let upcalls = Upcalls { locked: None };
-                IrReplica::new(membership.clone(), upcalls, channel)
+                IrReplica::new(membership.clone(), upcalls, channel, None)
             },
         )
     }
