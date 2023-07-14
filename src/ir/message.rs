@@ -122,6 +122,8 @@ pub struct Confirm<A> {
 pub struct DoViewChange<IO, CO, CR, A> {
     /// View to change to.
     pub view: View<A>,
+    /// From client (don't send cached leader record).
+    pub from_client: bool,
     /// Is `Some` when sent from replica to new leader.
     pub addendum: Option<ViewChangeAddendum<IO, CO, CR, A>>,
 }

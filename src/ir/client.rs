@@ -123,6 +123,7 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                         address,
                         Message::<U, T>::DoViewChange(DoViewChange {
                             view: latest_view.clone(),
+                            from_client: true,
                             addendum: None,
                         }),
                     )

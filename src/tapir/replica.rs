@@ -7,6 +7,7 @@ use crate::{
 };
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
+use tokio::time::timeout;
 use std::task::Context;
 use std::time::Duration;
 use std::{collections::HashMap, future::Future, hash::Hash};
@@ -628,7 +629,7 @@ impl<K: Key, V: Value> Replica<K, V> {
                 membership.clone(),
                 transport.clone(),
             );
-            tokio::spawn(future);
+            tokio::spawn(timeout(Duration::from_secs(5), future));
         }
     }
 }
