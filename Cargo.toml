@@ -12,7 +12,7 @@ required-features = ["maelstrom"]
 
 [features]
 default = ["maelstrom"]
-maelstrom = ["async-maelstrom", "env_logger", "log", "async-trait"]
+maelstrom = ["async-maelstrom", "async-trait", "tracing-subscriber"]
 
 [dependencies]
 bitcode = { version = "0.4.0", features = ["serde"] }
@@ -25,12 +25,13 @@ futures = "0.3.28"
 pin-project-lite = "0.2.9"
 derive_more = "0.99.17"
 async-maelstrom = { version = "0.1.2", optional = true }
-env_logger = { version = "0", optional = true }
-log = { version = "0.4", optional = true }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", optional = true, features = ["env-filter"]}
 async-trait = { version = "0", optional = true }
 
 [dev-dependencies]
 pprof = { version = "0.11.1", features = ["flamegraph"] }
+tracing-subscriber = {version = "0.3.17", features = ["env-filter"]}
 
 [profile.release]
 debug-assertions = true

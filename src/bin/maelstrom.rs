@@ -8,7 +8,7 @@ use async_maelstrom::process::{ProcNet, Process};
 use async_maelstrom::runtime::Runtime;
 use async_maelstrom::{Id, Status};
 use async_trait::async_trait;
-use log::info;
+use tracing::{info, trace, warn};
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -142,7 +142,7 @@ impl Transport<TapirReplica<K, V>> for Maelstrom {
             is_reply_to: None,
             do_reply_to: Some(reply),
         };
-        eprintln!("{id} sending {message:?} to {address}");
+        trace!("{id} sending {message:?} to {address}");
         let inner = Arc::clone(&self.inner);
         async move {
             loop {
@@ -180,7 +180,7 @@ impl Transport<TapirReplica<K, V>> for Maelstrom {
             do_reply_to: None,
             is_reply_to: None,
         };
-        //eprintln!("{} do-sending {message:?} to {address}", self.id);
+        trace!("{} do-sending {message:?} to {address}", self.id);
         let src = self.id.to_string();
         let txq = self.inner.net.txq.clone();
         tokio::spawn(async move {
@@ -258,10 +258,9 @@ impl Process<LinKv, Wrapper> for KvNode {
 
         let (transport, inner) = self.inner.as_ref().unwrap();
         loop {
-            eprintln!("RECEIVING");
             match transport.inner.net.rxq.recv().await {
                 Ok(Msg { src, body, .. }) => {
-                    eprintln!("received {body:?} from {src}");
+                    trace!("received {body:?} from {src}");
                     let transport = transport.clone();
                     let inner = inner.clone();
                     tokio::spawn(async move {
@@ -270,10 +269,7 @@ impl Process<LinKv, Wrapper> for KvNode {
                                 if let Some(reply) = app.is_reply_to {
                                     let mut requests = transport.inner.requests.lock().unwrap();
                                     if let Some(sender) = requests.remove(&reply) {
-                                        eprintln!("is reply");
                                         let _ = sender.send(app.message);
-                                    } else {
-                                        eprintln!("duplicate reply");
                                     }
                                 } else if let KvNodeInner::Replica(replica) = &inner {
                                     if let Some(response) =
@@ -288,14 +284,14 @@ impl Process<LinKv, Wrapper> for KvNode {
                                                 is_reply_to: app.do_reply_to,
                                             }),
                                         };
-                                        eprintln!("sending response {response:?}");
+                                        trace!("sending response {response:?}");
                                         let _ =
                                             transport.inner.net.txq.send(response).await.unwrap();
                                     } else {
-                                        eprintln!("NO RESPONSE");
+                                        trace!("NO RESPONSE");
                                     }
                                 } else {
-                                    eprintln!("(was unsolicited)");
+                                    trace!("(was unsolicited)");
                                 }
                             }
                             Body::Workload(work) => {
@@ -485,7 +481,7 @@ impl Process<LinKv, Wrapper> for KvNode {
                                     }
                                 } else {
                                     // Proxy...
-                                    eprintln!("Proxying...");
+                                    trace!("Proxying...");
                                     let _ = transport
                                         .inner
                                         .net
@@ -507,7 +503,7 @@ impl Process<LinKv, Wrapper> for KvNode {
                     });
                 }
                 Err(_) => {
-                    eprintln!("shutting down recv");
+                    warn!("shutting down recv");
                     return Ok(());
                 } // Runtime is shutting down.
             };
@@ -518,7 +514,10 @@ impl Process<LinKv, Wrapper> for KvNode {
 #[tokio::main]
 async fn main() -> Status {
     // Log to stderr where Maelstrom will capture it
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
+
     info!("starting");
 
     let process: KvNode = Default::default();

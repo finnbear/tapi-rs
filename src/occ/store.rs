@@ -5,6 +5,7 @@ use crate::{
     MvccStore,
 };
 use serde::{Deserialize, Serialize};
+use tracing::trace;
 use std::{
     borrow::Borrow,
     collections::{hash_map::Entry, BTreeMap, HashMap},
@@ -168,8 +169,6 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
             }
         }
 
-        // println!("pr = {prepared_reads:?}, pw = {prepared_writes:?}");
-
         let result = self.occ_check(&transaction, commit);
 
         // Avoid logical mutation in dry run.
@@ -304,7 +303,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
         commit: TS,
         finalized: bool,
     ) {
-        eprintln!("preparing {id:?} at {commit:?} (fin = {finalized})");
+        trace!("preparing {id:?} at {commit:?} (fin = {finalized})");
         match self.prepared.entry(id) {
             Entry::Vacant(vacant) => {
                 vacant.insert((commit, transaction.clone(), finalized));
@@ -341,7 +340,7 @@ impl<K: Key, V: Value, TS: Timestamp> Store<K, V, TS> {
 
     pub fn remove_prepared(&mut self, id: TransactionId) -> bool {
         if let Some((commit, transaction, finalized)) = self.prepared.remove(&id) {
-            eprintln!("removing prepared {id:?} at {commit:?} (fin = {finalized})");
+            trace!("removing prepared {id:?} at {commit:?} (fin = {finalized})");
             self.remove_prepared_inner(transaction, commit);
             true
         } else {

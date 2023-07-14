@@ -5,6 +5,7 @@ use crate::{
 };
 use rand::{thread_rng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
+use tracing::{trace, warn};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -137,13 +138,13 @@ impl<U: IrReplicaUpcalls> Transport<U> for Channel<U> {
         let mut persistent = self.persistent.lock().unwrap();
         if let Some(value) = value {
             let string = serde_json::to_string(&value).unwrap();
-            let display = if string.len() > 200 {
+            let to_display = if string.len() > 200 {
                 let with_bc = bitcode::serialize(&value).unwrap();
                 format!("<{} bytes ({} with bitcode)>", string.len(), with_bc.len())
             } else {
                 string.clone()
             };
-            eprintln!("{} persisting {key} = {display}", self.address);
+            trace!("{:?} persisting {:?} = {}", self.address, key, to_display);
             persistent.insert(key.to_owned(), string);
         } else {
             persistent.remove(key);
@@ -166,7 +167,7 @@ impl<U: IrReplicaUpcalls> Transport<U> for Channel<U> {
     ) -> impl Future<Output = R> + 'static {
         let from: usize = self.address;
         if LOG {
-            println!("{from} sending {message:?} to {address}");
+            trace!("{from} sending {message:?} to {address}");
         }
         let message = message.into();
         let inner = Arc::clone(&self.inner);
@@ -186,7 +187,7 @@ impl<U: IrReplicaUpcalls> Transport<U> for Channel<U> {
                     if let Some(result) = result {
                         let should_drop = Self::should_drop(address, from);
                         if LOG {
-                            println!(
+                            trace!(
                                 "{address} replying {result:?} to {from} (drop = {should_drop})"
                             );
                         }
@@ -196,7 +197,7 @@ impl<U: IrReplicaUpcalls> Transport<U> for Channel<U> {
                         }
                     }
                 } else {
-                    eprintln!("unknown address {address:?}");
+                    warn!("unknown address {address:?}");
                 }
             }
         }
@@ -206,7 +207,7 @@ impl<U: IrReplicaUpcalls> Transport<U> for Channel<U> {
         let from = self.address;
         let should_drop = Self::should_drop(self.address, address);
         if LOG {
-            println!("{from} do-sending {message:?} to {address} (drop = {should_drop})");
+            trace!("{from} do-sending {message:?} to {address} (drop = {should_drop})");
         }
         let message = message.into();
         let inner = self.inner.read().unwrap();

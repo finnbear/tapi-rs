@@ -13,6 +13,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use tracing::{warn, info, trace, trace_span};
 
 #[derive(Debug)]
 pub enum Status {
@@ -208,7 +209,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                     .retain(|a, _| sync.view.membership.contains(*a));
 
                 if sync.changed_view_recently {
-                    eprintln!("{:?} skipping view change", inner.transport.address());
+                    trace!("{:?} skipping view change", inner.transport.address());
                     sync.changed_view_recently = false;
                 }
                 /* else if sync
@@ -227,7 +228,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                     }
                     sync.view.number.0 += 1;
 
-                    eprintln!(
+                    info!(
                         "{:?} timeout sending do view change {}",
                         inner.transport.address(),
                         sync.view.number.0
@@ -288,6 +289,8 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
     }
 
     pub fn receive(&self, address: T::Address, message: Message<U, T>) -> Option<Message<U, T>> {
+        let _span = trace_span!("recv", address = ?self.address()).entered();
+
         let mut sync = self.inner.sync.lock().unwrap();
         let sync = &mut *sync;
 
@@ -303,14 +306,12 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                         result,
                         view: sync.view.clone(),
                     }));
-                } else {
-                    eprintln!("{:?} abnormal", self.inner.transport.address());
                 }
             }
             Message::<U, T>::ProposeInconsistent(ProposeInconsistent { op_id, op, recent }) => {
                 if sync.status.is_normal() {
                     if !recent.is_recent_relative_to(sync.view.number) {
-                        eprintln!("ancient relative to {:?}", sync.view.number);
+                        warn!("ancient relative to {:?}", sync.view.number);
                         return Some(Message::<U, T>::ReplyInconsistent(ReplyInconsistent {
                             op_id,
                             view: sync.view.clone(),
@@ -341,7 +342,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
             Message::<U, T>::ProposeConsensus(ProposeConsensus { op_id, op, recent }) => {
                 if sync.status.is_normal() {
                     if !recent.is_recent_relative_to(sync.view.number) {
-                        eprintln!("ancient relative to {:?}", sync.view.number);
+                        warn!("ancient relative to {:?}", sync.view.number);
                         return Some(Message::<U, T>::ReplyConsensus(ReplyConsensus {
                             op_id,
                             view: sync.view.clone(),
@@ -369,8 +370,6 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                         view: sync.view.clone(),
                         result_state: Some((result, state)),
                     }));
-                } else {
-                    eprintln!("{:?} abnormal", self.inner.transport.address());
                 }
             }
             Message::<U, T>::FinalizeInconsistent(FinalizeInconsistent { op_id }) => {
@@ -390,7 +389,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                             sync.upcalls.finalize_consensus(&entry.op, &entry.result);
                         } else if cfg!(debug_assertions) && entry.result != result {
                             // For diagnostic purposes.
-                            eprintln!("warning: tried to finalize consensus with {result:?} when {:?} was already finalized", entry.result);
+                            warn!("tried to finalize consensus with {result:?} when {:?} was already finalized", entry.result);
                         }
 
                         // Send `Confirm` regardless; the view number gives the
@@ -403,7 +402,6 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                 }
             }
             Message::<U, T>::DoViewChange(msg) => {
-                //eprintln!("{:?} receiving dvt {:?} and have {:?} / {:?}", self.inner.transport.address(), msg.view.number, sync.view.number, sync.status);
                 if msg.view.number > sync.view.number
                     || (msg.view.number == sync.view.number && sync.status.is_view_changing())
                 {
@@ -418,14 +416,6 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                             &mut *sync,
                         );
                     }
-
-                    /*
-                    eprintln!(
-                        "index = {:?} , leader index = {:?}",
-                        self.index,
-                        sync.view.leader_index()
-                    );
-                    */
 
                     if self.inner.transport.address() == sync.view.leader() && msg.addendum.is_some() {
                         debug_assert!(!msg.from_client);
@@ -454,7 +444,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                             );
 
                         if matching.clone().count() >= sync.latest_normal_view.membership.size().f_plus_one() {
-                            eprintln!("{:?} DOING VIEW CHANGE", self.inner.transport.address());
+                            info!("changing to {:?}", msg_view_number);
                             {
                                 let latest_normal_view =
                                     matching
@@ -475,8 +465,8 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                                     .map(|(_, r)| r.addendum.as_ref().unwrap().record.clone())
                                     .collect::<Vec<_>>();
 
-                                eprintln!(
-                                    "have {} latest ({:?})",
+                                trace!(
+                                    "have {} latest records ({:?})",
                                     latest_records.len(),
                                     sync
                                         .outstanding_do_view_changes
@@ -570,16 +560,13 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                                     }
 
                                     if let Some(majority_result_in_d) = majority_result_in_d {
-                                        eprintln!("merge majority replied {:?} to {op_id:?}", majority_result_in_d);
+                                        trace!("merge majority replied {:?} to {op_id:?}", majority_result_in_d);
                                         d.insert(op_id, (entries[0].op.clone(), majority_result_in_d));
                                     } else {
-                                        eprintln!("merge no majority for {op_id:?}; deciding among {:?}", entries.iter().map(|entry| (entry.result.clone(), entry.state)).collect::<Vec<_>>());
+                                        trace!("merge no majority for {op_id:?}; deciding among {:?}", entries.iter().map(|entry| (entry.result.clone(), entry.state)).collect::<Vec<_>>());
                                         u.extend(entries.into_iter().map(|e| (op_id, e.op, e.result)));
                                     }
                                 }
-
-                                // println!("d = {d:?}");
-                                // println!("u = {u:?}");
 
                                 {
                                     let sync = &mut *sync;
@@ -642,8 +629,8 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                             );
                         }
                     }
-                } else if let Some(leader_record) = sync.leader_record.as_ref() && leader_record.view.number >= msg.view.number {
-                    println!("{:?} sending leader record to help catch up {address:?}", self.address());
+                } else if !msg.from_client && let Some(leader_record) = sync.leader_record.as_ref() && leader_record.view.number >= msg.view.number {
+                    warn!("{:?} sending leader record to help catch up {address:?}", self.address());
                     self.inner.transport.do_send(address, leader_record.clone());
                 }
             }
@@ -654,7 +641,7 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                 if view.number > sync.view.number
                     || (view.number == sync.view.number && !sync.status.is_normal())
                 {
-                    eprintln!("{:?} starting view {:?} (was {:?} in {:?})", self.inner.transport.address(), view.number, sync.status, sync.view.number);
+                    info!("starting view {:?} (was {:?} in {:?})", view.number, sync.status, sync.view.number);
                     sync.upcalls.sync(&sync.record, &new_record);
                     sync.record = new_record.clone();
                     sync.status = Status::Normal;
@@ -666,13 +653,12 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                 }
             }
             Message::<U, T>::AddMember(AddMember{address}) => {
-                eprintln!("{:?} recv add member {address:?}", self.inner.transport.address());
                 if sync.status.is_normal() && sync.view.membership.get_index(address).is_none() {
                     if !sync.view.membership.contains(self.inner.transport.address()) {
                         // TODO: Expand coverage.
                         return None;
                     }
-                    eprintln!("{:?} acting on add member {address:?}", self.inner.transport.address());
+                    info!("adding member {address:?}");
 
                     sync.status = Status::ViewChanging;
                     sync.view.number.0 += 3;
@@ -691,12 +677,11 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                 }
             }
             Message::<U, T>::RemoveMember(RemoveMember{address}) => {
-                eprintln!("{:?} recv remove member {address:?}", self.inner.transport.address());
                 if sync.status.is_normal() && sync.view.membership.get_index(address).is_some() && sync.view.membership.len() > 1 && address != self.inner.transport.address() {
                     if !sync.view.membership.contains(self.inner.transport.address()) {
                         return None;
                     }
-                    eprintln!("{:?} acting on remove member {address:?}", self.inner.transport.address());
+                    info!("removing member {address:?}");
                     sync.status = Status::ViewChanging;
                     sync.view.number.0 += 3;
 
@@ -714,7 +699,8 @@ impl<U: Upcalls, T: Transport<U>> Replica<U, T> {
                 }
             }
             _ => {
-                eprintln!("unexpected message");
+                debug_assert!(false);
+                warn!("unexpected message");
             }
         }
         None

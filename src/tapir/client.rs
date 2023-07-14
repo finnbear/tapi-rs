@@ -4,6 +4,7 @@ use crate::{
 };
 use futures::future::join_all;
 use rand::{thread_rng, Rng};
+use tracing::trace;
 use std::{
     collections::HashMap,
     future::Future,
@@ -226,7 +227,7 @@ impl<K: Key, V: Value, T: TapirTransport<K, V>> Transaction<K, V, T> {
                 }
 
                 if ok && remaining_tries != 3 {
-                    eprintln!("Retry actually worked!");
+                    trace!("retry actually worked!");
                 }
 
                 return Some(timestamp).filter(|_| ok);

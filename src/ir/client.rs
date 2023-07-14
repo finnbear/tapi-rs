@@ -302,7 +302,6 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                     continue;
                 }
 
-                // println!("finalizing to membership: {:?}", sync.membership);
                 for address in &sync.view.membership {
                     inner
                         .transport
@@ -433,10 +432,9 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
 
                     let membership_size = sync.view.membership.size();
                     let finalized = get_finalized(&results);
-                    //println!("checking quorum: {}", finalized.is_some());
+
                     if finalized.is_none() && let Some((_, result)) = get_quorum(membership_size, &results, true) {
                         // Fast path.
-                        // eprintln!("doing fast path");
                         for address in &sync.view.membership {
                             inner.transport.do_send(
                                 address,
@@ -466,12 +464,6 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
                         })
                     {
                         // Slow path.
-                        /*
-                        eprintln!(
-                            "doing SLOW path finalized={}",
-                            reply_consensus_view.is_none()
-                        );
-                        */
                         let future = join(sync.view.membership.iter().map(|address| {
                             (
                                 address,
@@ -487,7 +479,6 @@ impl<U: ReplicaUpcalls, T: Transport<U>> Client<U, T> {
 
                         Some((result, reply_consensus_view, future))
                     } else {
-                        // println!("no quorum");
                         None
                     }
                 };

@@ -8,6 +8,7 @@ use crate::{
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
+use tracing::{trace, warn};
 use std::task::Context;
 use std::time::Duration;
 use std::{collections::HashMap, future::Future, hash::Hash};
@@ -62,7 +63,7 @@ impl<K: Key, V: Value> Replica<K, V> {
         _membership: IrMembership<T::Address>,
         transport: T,
     ) -> impl Future<Output = ()> {
-        eprintln!("trying to recover {transaction_id:?}");
+        warn!("trying to recover {transaction_id:?}");
 
         async move {
             let mut participants = HashMap::new();
@@ -196,7 +197,7 @@ impl<K: Key, V: Value> Replica<K, V> {
                 .iter()
                 .all(|r| matches!(r, Some(OccPrepareResult::Ok)));
 
-            eprintln!("BACKUP COORD got ok={ok} for {transaction_id:?} @ {commit:?}");
+            trace!("BACKUP COORD got ok={ok} for {transaction_id:?} @ {commit:?}");
 
             join_all(participants.values().map(|client| {
                 let transaction = transaction.clone();
@@ -425,7 +426,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 ..
             } => {
                 if matches!(res, CR::Prepare(OccPrepareResult::Ok)) && let Some((ts, _, finalized)) = self.inner.prepared.get_mut(transaction_id) && *commit == *ts {
-                    eprintln!("confirming prepare {transaction_id:?} at {commit:?}");
+                    trace!("confirming prepare {transaction_id:?} at {commit:?}");
                     *finalized = true;
                 }
             }
@@ -469,7 +470,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                             //
                             // Finalize it immediately since we are syncing
                             // from the leader's record.
-                            eprintln!("syncing successful {op_id:?} prepare for {transaction_id:?} at {commit:?} (had {:?})", self.inner.prepared.get(transaction_id));
+                            trace!("syncing successful {op_id:?} prepare for {transaction_id:?} at {commit:?} (had {:?})", self.inner.prepared.get(transaction_id));
                             self.inner.add_prepared(
                                 *transaction_id,
                                 transaction.clone(),
@@ -484,7 +485,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                         .map(|(ts, _, _)| ts == commit)
                         .unwrap_or(false)
                     {
-                        eprintln!(
+                        trace!(
                             "syncing {:?} {op_id:?} prepare for {transaction_id:?} at {commit:?}",
                             entry.result
                         );
@@ -516,7 +517,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                 continue;
             }
 
-            eprintln!("syncing inconsistent {op_id:?} {:?}", entry.op);
+            trace!("syncing inconsistent {op_id:?} {:?}", entry.op);
 
             self.exec_inconsistent(&entry.op);
         }
@@ -558,9 +559,9 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
                     };
 
                     if &result == reply {
-                        eprintln!("merge preserving {op_id:?} {transaction_id:?} result {result:?} at {commit:?}");
+                        trace!("merge preserving {op_id:?} {transaction_id:?} result {result:?} at {commit:?}");
                     } else {
-                        eprintln!("merge changed {op_id:?} {transaction_id:?} at {commit:?} from {reply:?} to {result:?}");
+                        trace!("merge changed {op_id:?} {transaction_id:?} at {commit:?} from {reply:?} to {result:?}");
                     }
 
                     self.finalize_consensus(request, &result);
@@ -596,7 +597,7 @@ impl<K: Key, V: Value> IrReplicaUpcalls for Replica<K, V> {
         // results.
         for (op_id, request, _) in &u {
             let result = self.exec_consensus(request);
-            eprintln!("merge choosing {result:?} for {op_id:?}");
+            trace!("merge choosing {result:?} for {op_id:?}");
             ret.insert(*op_id, result);
         }
 
@@ -610,10 +611,12 @@ impl<K: Key, V: Value> Replica<K, V> {
         transport: &T,
         membership: &IrMembership<T::Address>,
     ) {
-        eprintln!(
-            "there are {} prepared transactions",
-            self.inner.prepared.len()
-        );
+        if !self.inner.prepared.is_empty() {
+            trace!(
+                "there are {} prepared transactions",
+                self.inner.prepared.len()
+            );
+        }
         let threshold: u64 = transport.time_offset(-500);
         if let Some((transaction_id, (commit, transaction, _))) =
             self.inner.prepared.iter().min_by_key(|(_, (c, _, _))| *c)

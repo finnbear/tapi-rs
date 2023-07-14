@@ -13,6 +13,10 @@ use std::{
 };
 use tokio::time::timeout;
 
+fn init_tracing() {
+    let _ = tracing::subscriber::set_global_default(tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).finish());
+}
+
 type K = i64;
 type V = i64;
 type Transport = ChannelTransport<TapirReplica<K, V>>;
@@ -103,6 +107,8 @@ fn build_sharded_kv(
     Vec<Vec<Arc<IrReplica<TapirReplica<K, V>, ChannelTransport<TapirReplica<K, V>>>>>>,
     Vec<Arc<TapirClient<K, V, ChannelTransport<TapirReplica<K, V>>>>>,
 ) {
+    init_tracing();
+
     println!("---------------------------");
     println!(" linearizable={linearizable} num_shards={num_shards} num_replicas={num_replicas}");
     println!("---------------------------");
