@@ -14,7 +14,11 @@ use std::{
 use tokio::time::timeout;
 
 fn init_tracing() {
-    let _ = tracing::subscriber::set_global_default(tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).finish());
+    let _ = tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .finish(),
+    );
 }
 
 type K = i64;

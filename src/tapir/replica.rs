@@ -1,17 +1,18 @@
 use super::{Key, ShardNumber, Timestamp, Value, CO, CR, IO, UO, UR};
 use crate::ir::ReplyUnlogged;
+use crate::tapir::ShardClient;
 use crate::util::vectorize;
 use crate::{
-    IrClient, IrMembership, IrMembershipSize, IrOpId, IrRecord, IrReplicaUpcalls, OccPrepareResult,
-    OccStore, OccTransaction, OccTransactionId, TapirTransport,
+    IrClientId, IrMembership, IrMembershipSize, IrOpId, IrRecord, IrReplicaUpcalls,
+    OccPrepareResult, OccStore, OccTransaction, OccTransactionId, TapirTransport,
 };
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
-use tokio::time::timeout;
-use tracing::{trace, warn};
 use std::task::Context;
 use std::time::Duration;
 use std::{collections::HashMap, future::Future, hash::Hash};
+use tokio::time::timeout;
+use tracing::{trace, warn};
 
 /// Diverge from TAPIR and don't maintain a no-vote list. Instead, wait for a
 /// view change to syncronize each participant shard's prepare result and then
@@ -67,56 +68,23 @@ impl<K: Key, V: Value> Replica<K, V> {
 
         async move {
             let mut participants = HashMap::new();
+            let client_id = IrClientId::new();
             for shard in transaction.participants() {
                 let membership = transport.shard_addresses(shard).await;
-                participants.insert(shard, IrClient::new(membership, transport.clone()));
+                participants.insert(
+                    shard,
+                    ShardClient::new(client_id, shard, membership, transport.clone()),
+                );
             }
 
-            let min_prepares = join_all(participants.values().map(|client| {
-                client.invoke_consensus(
-                    CO::RaiseMinPrepareTime {
-                        time: commit.time + 1,
-                    },
-                    |results, size| {
-                        let times = results.iter().filter_map(|(r, c)| {
-                            if let CR::RaiseMinPrepareTime { time } = r {
-                                Some((*time, *c))
-                            } else {
-                                debug_assert!(false);
-                                None
-                            }
-                        });
-
-                        // Find a time that a quorum of replicas agree on.
-                        CR::RaiseMinPrepareTime {
-                            time: times
-                                .clone()
-                                .filter(|&(time, _)| {
-                                    times
-                                        .clone()
-                                        .filter(|&(t, _)| t >= time)
-                                        .map(|(_, c)| c)
-                                        .sum::<usize>()
-                                        >= size.f_plus_one()
-                                })
-                                .map(|(t, _)| t)
-                                .max()
-                                .unwrap_or_else(|| {
-                                    debug_assert!(false);
-                                    0
-                                }),
-                        }
-                    },
-                )
-            }))
+            let min_prepares = join_all(
+                participants
+                    .values()
+                    .map(|client| client.raise_min_prepare_time(commit.time + 1)),
+            )
             .await;
 
-            if min_prepares.into_iter().any(|min_prepare| {
-                let CR::RaiseMinPrepareTime { time: min_prepare_time } = min_prepare else {
-                    debug_assert!(false);
-                    return true;
-                };
-
+            if min_prepares.into_iter().any(|min_prepare_time| {
                 if commit.time >= min_prepare_time {
                     // Not ready.
                     return true;
@@ -166,7 +134,7 @@ impl<K: Key, V: Value> Replica<K, V> {
             }
 
             let results = join_all(participants.values().map(|client| {
-                let (future, membership) = client.invoke_unlogged_joined(UO::CheckPrepare {
+                let (future, membership) = client.inner.invoke_unlogged_joined(UO::CheckPrepare {
                     transaction_id,
                     commit,
                 });
@@ -204,6 +172,7 @@ impl<K: Key, V: Value> Replica<K, V> {
                 async move {
                     if ok {
                         client
+                            .inner
                             .invoke_inconsistent(IO::Commit {
                                 transaction_id,
                                 transaction,
@@ -212,6 +181,7 @@ impl<K: Key, V: Value> Replica<K, V> {
                             .await
                     } else {
                         client
+                            .inner
                             .invoke_inconsistent(IO::Abort {
                                 transaction_id,
                                 commit: Some(commit),

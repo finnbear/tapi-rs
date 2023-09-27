@@ -5,7 +5,6 @@ use crate::{
 };
 use rand::{thread_rng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
-use tracing::{trace, warn};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -14,6 +13,7 @@ use std::{
     sync::{Arc, Mutex, RwLock},
     time::{Duration, SystemTime},
 };
+use tracing::{trace, warn};
 
 const LOG: bool = true;
 

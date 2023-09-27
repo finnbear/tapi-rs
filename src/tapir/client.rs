@@ -4,7 +4,6 @@ use crate::{
 };
 use futures::future::join_all;
 use rand::{thread_rng, Rng};
-use tracing::trace;
 use std::{
     collections::HashMap,
     future::Future,
@@ -16,6 +15,7 @@ use std::{
     time::Duration,
 };
 use tokio::select;
+use tracing::trace;
 
 pub struct Client<K: Key, V: Value, T: TapirTransport<K, V>> {
     inner: Arc<Mutex<Inner<K, V, T>>>,

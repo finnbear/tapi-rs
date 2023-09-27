@@ -5,7 +5,6 @@ use crate::{
     MvccStore,
 };
 use serde::{Deserialize, Serialize};
-use tracing::trace;
 use std::{
     borrow::Borrow,
     collections::{hash_map::Entry, BTreeMap, HashMap},
@@ -13,6 +12,7 @@ use std::{
     hash::Hash,
     ops::{Bound, Deref, DerefMut},
 };
+use tracing::trace;
 
 #[derive(Serialize, Deserialize)]
 pub struct Store<K, V, TS> {

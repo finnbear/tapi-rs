@@ -13,7 +13,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tracing::{warn, info, trace, trace_span};
+use tracing::{info, trace, trace_span, warn};
 
 #[derive(Debug)]
 pub enum Status {

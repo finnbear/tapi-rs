@@ -7,7 +7,7 @@ use std::future::Future;
 
 pub struct ShardClient<K: Key, V: Value, T: Transport<Replica<K, V>>> {
     shard: ShardNumber,
-    inner: IrClient<Replica<K, V>, T>,
+    pub(crate) inner: IrClient<Replica<K, V>, T>,
 }
 
 impl<K: Key, V: Value, T: Transport<Replica<K, V>>> Clone for ShardClient<K, V, T> {
@@ -145,5 +145,49 @@ impl<K: Key, V: Value, T: Transport<Replica<K, V>>> ShardClient<K, V, T> {
                 commit: None,
             }
         })
+    }
+
+    pub fn raise_min_prepare_time(&self, time: u64) -> impl Future<Output = u64> + Send {
+        let future =
+            self.inner
+                .invoke_consensus(CO::RaiseMinPrepareTime { time }, |results, size| {
+                    let times = results.iter().filter_map(|(r, c)| {
+                        if let CR::RaiseMinPrepareTime { time } = r {
+                            Some((*time, *c))
+                        } else {
+                            debug_assert!(false);
+                            None
+                        }
+                    });
+
+                    // Find a time that a quorum of replicas agree on.
+                    CR::RaiseMinPrepareTime {
+                        time: times
+                            .clone()
+                            .filter(|&(time, _)| {
+                                times
+                                    .clone()
+                                    .filter(|&(t, _)| t >= time)
+                                    .map(|(_, c)| c)
+                                    .sum::<usize>()
+                                    >= size.f_plus_one()
+                            })
+                            .map(|(t, _)| t)
+                            .max()
+                            .unwrap_or_else(|| {
+                                debug_assert!(false);
+                                0
+                            }),
+                    }
+                });
+        async move {
+            match future.await {
+                CR::RaiseMinPrepareTime { time } => time,
+                _ => {
+                    debug_assert!(false);
+                    0
+                }
+            }
+        }
     }
 }

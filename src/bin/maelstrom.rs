@@ -8,7 +8,6 @@ use async_maelstrom::process::{ProcNet, Process};
 use async_maelstrom::runtime::Runtime;
 use async_maelstrom::{Id, Status};
 use async_trait::async_trait;
-use tracing::{info, trace, warn};
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -23,6 +22,7 @@ use tapirs::{
     IrMembership, IrMessage, IrReplica, TapirClient, TapirReplica, TapirTransport, Transport,
 };
 use tokio::spawn;
+use tracing::{info, trace, warn};
 
 type K = String;
 type V = String;
