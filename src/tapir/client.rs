@@ -256,8 +256,7 @@ impl<K: Key, V: Value, T: TapirTransport<K, V>> Transaction<K, V, T> {
                 let sleep = T::sleep(duration);
                 select! {
                     _ = sleep => {
-                        std::future::pending::<()>().await;
-                        unreachable!();
+                        std::future::pending::<!>().await
                     }
                     result = inner => {
                         result

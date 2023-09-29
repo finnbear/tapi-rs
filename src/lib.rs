@@ -3,6 +3,7 @@
 #![feature(int_roundings)]
 #![feature(let_chains)]
 #![feature(btree_cursors)]
+#![feature(never_type)]
 #![allow(clippy::type_complexity)]
 
 mod ir;
